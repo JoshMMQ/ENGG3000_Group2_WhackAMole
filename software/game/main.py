@@ -13,9 +13,11 @@ except ImportError:
 try:
     from .coordinates import CoordinateMapper, ScreenPosition
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
+    from .udp_position import UdpPositionSource
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
     from simulated_position import PhysicalPosition, SimulatedPositionSource
+    from udp_position import UdpPositionSource
 
 
 WINDOW_WIDTH_PX = 900
@@ -59,8 +61,8 @@ def draw_frame(screen: object, cursor_position: ScreenPosition) -> None:
     pygame.display.flip()
 
 
-def run(smoke_test: bool = False) -> int:
-    """Open a 900 x 900 window and render a simulated moving cursor."""
+def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
+    """Open a 900 x 900 window and render a moving cursor."""
 
     if pygame is None:
         print(
@@ -75,35 +77,46 @@ def run(smoke_test: bool = False) -> int:
     pygame.display.set_caption("Whack-a-Mole Prototype")
     clock = pygame.time.Clock()
     mapper = CoordinateMapper()
-    position_source = SimulatedPositionSource()
+    simulated_source = SimulatedPositionSource()
+    udp_source = UdpPositionSource() if input_source == "udp" else None
     start_ticks = pygame.time.get_ticks()
 
     if smoke_test:
-        cursor_position = mapped_cursor_position(position_source.position_at(0.0), mapper)
+        cursor_position = mapped_cursor_position(simulated_source.position_at(0.0), mapper)
         draw_frame(screen, cursor_position)
+        if udp_source is not None:
+            udp_source.close()
         pygame.quit()
         return 0
 
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                running = False
+    try:
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    running = False
 
-        elapsed_s = (pygame.time.get_ticks() - start_ticks) / 1000.0
-        cursor_position = mapped_cursor_position(position_source.position_at(elapsed_s), mapper)
-        draw_frame(screen, cursor_position)
-        clock.tick(FRAME_RATE)
-
-    pygame.quit()
+            elapsed_s = (pygame.time.get_ticks() - start_ticks) / 1000.0
+            if udp_source is None:
+                physical_position = simulated_source.position_at(elapsed_s)
+            else:
+                physical_position = udp_source.poll_position()
+            cursor_position = mapped_cursor_position(physical_position, mapper)
+            draw_frame(screen, cursor_position)
+            clock.tick(FRAME_RATE)
+    finally:
+        if udp_source is not None:
+            udp_source.close()
+        pygame.quit()
     return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
-    return run(smoke_test="--smoke-test" in args)
+    input_source = "udp" if "--input" in args and "udp" in args else "simulated"
+    return run(smoke_test="--smoke-test" in args, input_source=input_source)
 
 
 if __name__ == "__main__":
