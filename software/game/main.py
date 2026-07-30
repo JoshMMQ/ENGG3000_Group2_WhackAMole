@@ -12,10 +12,12 @@ except ImportError:
 
 try:
     from .coordinates import CoordinateMapper, ScreenPosition
+    from .scene import draw_scene
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
     from .udp_position import UdpPositionSource
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
+    from scene import draw_scene
     from simulated_position import PhysicalPosition, SimulatedPositionSource
     from udp_position import UdpPositionSource
 
@@ -23,10 +25,6 @@ except ImportError:
 WINDOW_WIDTH_PX = 900
 WINDOW_HEIGHT_PX = 900
 STATIC_POSITION_M = (1.5, 1.5)
-BACKGROUND_COLOR = (24, 28, 36)
-CURSOR_COLOR = (85, 195, 255)
-CURSOR_OUTLINE_COLOR = (235, 248, 255)
-CURSOR_RADIUS_PX = 18
 FRAME_RATE = 60
 
 
@@ -55,10 +53,7 @@ def draw_frame(screen: object, cursor_position: ScreenPosition) -> None:
     if pygame is None:
         raise RuntimeError("pygame is required to draw the game window")
 
-    screen.fill(BACKGROUND_COLOR)
-    pygame.draw.circle(screen, CURSOR_OUTLINE_COLOR, cursor_position, CURSOR_RADIUS_PX + 3)
-    pygame.draw.circle(screen, CURSOR_COLOR, cursor_position, CURSOR_RADIUS_PX)
-    pygame.display.flip()
+    draw_scene(screen, cursor_position)
 
 
 def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
