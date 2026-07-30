@@ -13,8 +13,8 @@ It does not require ultrasonic sensors yet.
 Default values in `sensor_node.ino`:
 
 ```cpp
-const char* AP_SSID = "WhackAMole-ESP32";
-const char* AP_PASSWORD = "whackamole123";
+const char* AP_SSID = "WhackAMole-team2-ESP32";
+const char* AP_PASSWORD = "whackamole123456789";
 IPAddress AP_IP(192, 168, 4, 1);
 IPAddress UDP_BROADCAST_IP(192, 168, 4, 255);
 ```
