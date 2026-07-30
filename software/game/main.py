@@ -12,8 +12,10 @@ except ImportError:
 
 try:
     from .coordinates import CoordinateMapper, ScreenPosition
+    from .simulated_position import PhysicalPosition, SimulatedPositionSource
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
+    from simulated_position import PhysicalPosition, SimulatedPositionSource
 
 
 WINDOW_WIDTH_PX = 900
@@ -26,14 +28,23 @@ CURSOR_RADIUS_PX = 18
 FRAME_RATE = 60
 
 
+def mapped_cursor_position(
+    physical_position: PhysicalPosition,
+    mapper: Optional[CoordinateMapper] = None,
+) -> ScreenPosition:
+    """Return the screen position for a physical metre position."""
+
+    active_mapper = mapper or CoordinateMapper()
+    position = active_mapper.physical_to_screen(*physical_position)
+    if position is None:
+        raise ValueError("cursor position must be valid")
+    return position
+
+
 def static_cursor_position(mapper: Optional[CoordinateMapper] = None) -> ScreenPosition:
     """Return the screen position for the prototype's static centre cursor."""
 
-    active_mapper = mapper or CoordinateMapper()
-    position = active_mapper.physical_to_screen(*STATIC_POSITION_M)
-    if position is None:
-        raise ValueError("static cursor position must be valid")
-    return position
+    return mapped_cursor_position(STATIC_POSITION_M, mapper)
 
 
 def draw_frame(screen: object, cursor_position: ScreenPosition) -> None:
@@ -49,7 +60,7 @@ def draw_frame(screen: object, cursor_position: ScreenPosition) -> None:
 
 
 def run(smoke_test: bool = False) -> int:
-    """Open a 900 x 900 window and render a static mapped cursor."""
+    """Open a 900 x 900 window and render a simulated moving cursor."""
 
     if pygame is None:
         print(
@@ -63,9 +74,12 @@ def run(smoke_test: bool = False) -> int:
     screen = pygame.display.set_mode((WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX))
     pygame.display.set_caption("Whack-a-Mole Prototype")
     clock = pygame.time.Clock()
-    cursor_position = static_cursor_position()
+    mapper = CoordinateMapper()
+    position_source = SimulatedPositionSource()
+    start_ticks = pygame.time.get_ticks()
 
     if smoke_test:
+        cursor_position = mapped_cursor_position(position_source.position_at(0.0), mapper)
         draw_frame(screen, cursor_position)
         pygame.quit()
         return 0
@@ -78,6 +92,8 @@ def run(smoke_test: bool = False) -> int:
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
 
+        elapsed_s = (pygame.time.get_ticks() - start_ticks) / 1000.0
+        cursor_position = mapped_cursor_position(position_source.position_at(elapsed_s), mapper)
         draw_frame(screen, cursor_position)
         clock.tick(FRAME_RATE)
 
