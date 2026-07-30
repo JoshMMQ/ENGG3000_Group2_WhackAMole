@@ -12,12 +12,28 @@ except ImportError:
 
 try:
     from .coordinates import CoordinateMapper, ScreenPosition
-    from .scene import draw_scene
+    from .scene import (
+        GameplayUi,
+        continue_button_rect,
+        draw_game_over_screen,
+        draw_loading_screen,
+        draw_scene,
+        draw_title_screen,
+        start_button_rect,
+    )
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
     from .udp_position import UdpPositionSource
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
-    from scene import draw_scene
+    from scene import (
+        GameplayUi,
+        continue_button_rect,
+        draw_game_over_screen,
+        draw_loading_screen,
+        draw_scene,
+        draw_title_screen,
+        start_button_rect,
+    )
     from simulated_position import PhysicalPosition, SimulatedPositionSource
     from udp_position import UdpPositionSource
 
@@ -26,6 +42,8 @@ WINDOW_WIDTH_PX = 900
 WINDOW_HEIGHT_PX = 900
 STATIC_POSITION_M = (1.5, 1.5)
 FRAME_RATE = 60
+LOADING_SECONDS = 1.0
+GAME_SECONDS = 60
 
 
 def mapped_cursor_position(
@@ -41,23 +59,29 @@ def mapped_cursor_position(
     return position
 
 
+def create_mapper(screen_size: ScreenPosition = (WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX)) -> CoordinateMapper:
+    """Create a coordinate mapper for the active window size."""
+
+    return CoordinateMapper(screen_width_px=screen_size[0], screen_height_px=screen_size[1])
+
+
 def static_cursor_position(mapper: Optional[CoordinateMapper] = None) -> ScreenPosition:
     """Return the screen position for the prototype's static centre cursor."""
 
     return mapped_cursor_position(STATIC_POSITION_M, mapper)
 
 
-def draw_frame(screen: object, cursor_position: ScreenPosition) -> None:
+def draw_frame(screen: object, cursor_position: ScreenPosition, ui: GameplayUi | None = None) -> None:
     """Draw the current prototype frame."""
 
     if pygame is None:
         raise RuntimeError("pygame is required to draw the game window")
 
-    draw_scene(screen, cursor_position)
+    draw_scene(screen, cursor_position, ui)
 
 
 def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
-    """Open a 900 x 900 window and render a moving cursor."""
+    """Open a resizable 900 x 900 window and render a moving cursor."""
 
     if pygame is None:
         print(
@@ -68,17 +92,23 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
         return 1
 
     pygame.init()
-    screen = pygame.display.set_mode((WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX))
+    screen = pygame.display.set_mode((WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX), pygame.RESIZABLE)
     pygame.display.set_caption("Whack-a-Mole Prototype")
     clock = pygame.time.Clock()
-    mapper = CoordinateMapper()
+    mapper = create_mapper(screen.get_size())
     simulated_source = SimulatedPositionSource()
     udp_source = UdpPositionSource() if input_source == "udp" else None
     start_ticks = pygame.time.get_ticks()
+    game_start_ticks = start_ticks
+    game_state = "loading"
+    score = 0
 
     if smoke_test:
         cursor_position = mapped_cursor_position(simulated_source.position_at(0.0), mapper)
-        draw_frame(screen, cursor_position)
+        draw_loading_screen(screen, 1.0)
+        draw_title_screen(screen)
+        draw_frame(screen, cursor_position, GameplayUi(score=score, lives=3, remaining_seconds=GAME_SECONDS))
+        draw_game_over_screen(screen, score)
         if udp_source is not None:
             udp_source.close()
         pygame.quit()
@@ -87,19 +117,55 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
     try:
         running = True
         while running:
+            now_ticks = pygame.time.get_ticks()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        if game_state in ("loading", "title", "game_over"):
+                            game_state = "playing"
+                            game_start_ticks = now_ticks
+                            score = 0
+                    elif event.key == pygame.K_g and game_state == "playing":
+                        game_state = "game_over"
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    width, height = screen.get_size()
+                    if game_state == "title" and pygame.Rect(start_button_rect(width, height)).collidepoint(event.pos):
+                        game_state = "playing"
+                        game_start_ticks = now_ticks
+                        score = 0
+                    elif game_state == "game_over" and pygame.Rect(continue_button_rect(width, height)).collidepoint(event.pos):
+                        game_state = "playing"
+                        game_start_ticks = now_ticks
+                        score = 0
 
-            elapsed_s = (pygame.time.get_ticks() - start_ticks) / 1000.0
-            if udp_source is None:
-                physical_position = simulated_source.position_at(elapsed_s)
+            if game_state == "loading":
+                progress = (now_ticks - start_ticks) / 1000.0 / LOADING_SECONDS
+                draw_loading_screen(screen, progress)
+                if progress >= 1.0:
+                    game_state = "title"
+            elif game_state == "title":
+                draw_title_screen(screen)
+            elif game_state == "game_over":
+                draw_game_over_screen(screen, score)
             else:
-                physical_position = udp_source.poll_position()
-            cursor_position = mapped_cursor_position(physical_position, mapper)
-            draw_frame(screen, cursor_position)
+                game_elapsed_s = (now_ticks - game_start_ticks) / 1000.0
+                remaining_seconds = max(0, GAME_SECONDS - int(game_elapsed_s))
+                if remaining_seconds <= 0:
+                    game_state = "game_over"
+                    draw_game_over_screen(screen, score)
+                else:
+                    if udp_source is None:
+                        physical_position = simulated_source.position_at(game_elapsed_s)
+                    else:
+                        physical_position = udp_source.poll_position()
+                    mapper = create_mapper(screen.get_size())
+                    cursor_position = mapped_cursor_position(physical_position, mapper)
+                    ui = GameplayUi(score=score, lives=3, remaining_seconds=remaining_seconds)
+                    draw_frame(screen, cursor_position, ui)
             clock.tick(FRAME_RATE)
     finally:
         if udp_source is not None:

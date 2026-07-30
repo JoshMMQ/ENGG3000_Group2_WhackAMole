@@ -1,6 +1,6 @@
 import unittest
 
-from software.game.scene import hole_positions
+from software.game.scene import GameplayUi, continue_button_rect, hole_positions, start_button_rect
 
 
 class SceneLayoutTests(unittest.TestCase):
@@ -17,6 +17,29 @@ class SceneLayoutTests(unittest.TestCase):
             self.assertLess(x, 900)
             self.assertGreater(y, 0)
             self.assertLess(y, 900)
+
+    def test_start_button_stays_inside_window(self) -> None:
+        x, y, width, height = start_button_rect(900, 900)
+
+        self.assertGreaterEqual(x, 0)
+        self.assertGreaterEqual(y, 0)
+        self.assertLessEqual(x + width, 900)
+        self.assertLessEqual(y + height, 900)
+
+    def test_continue_button_stays_inside_window(self) -> None:
+        x, y, width, height = continue_button_rect(900, 900)
+
+        self.assertGreaterEqual(x, 0)
+        self.assertGreaterEqual(y, 0)
+        self.assertLessEqual(x + width, 900)
+        self.assertLessEqual(y + height, 900)
+
+    def test_gameplay_ui_defaults_match_starting_hud(self) -> None:
+        ui = GameplayUi()
+
+        self.assertEqual(ui.score, 0)
+        self.assertEqual(ui.lives, 3)
+        self.assertEqual(ui.remaining_seconds, 60)
 
 
 if __name__ == "__main__":
