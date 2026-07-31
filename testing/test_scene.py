@@ -5,6 +5,7 @@ from software.game.scene import (
     active_mole_position,
     continue_button_rect,
     hole_positions,
+    pause_button_rect,
     start_button_rect,
 )
 
@@ -46,6 +47,14 @@ class SceneLayoutTests(unittest.TestCase):
 
     def test_continue_button_stays_inside_window(self) -> None:
         x, y, width, height = continue_button_rect(900, 900)
+
+        self.assertGreaterEqual(x, 0)
+        self.assertGreaterEqual(y, 0)
+        self.assertLessEqual(x + width, 900)
+        self.assertLessEqual(y + height, 900)
+
+    def test_pause_button_stays_inside_window(self) -> None:
+        x, y, width, height = pause_button_rect(900, 900)
 
         self.assertGreaterEqual(x, 0)
         self.assertGreaterEqual(y, 0)

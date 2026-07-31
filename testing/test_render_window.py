@@ -3,6 +3,7 @@ import unittest
 from software.game.main import (
     active_hole_index_at,
     create_mapper,
+    gameplay_elapsed_seconds,
     is_cursor_over_mole,
     mapped_cursor_position,
     scaled_hit_radius,
@@ -49,6 +50,12 @@ class RenderWindowTests(unittest.TestCase):
     def test_cursor_over_mole_rejects_negative_radius(self) -> None:
         with self.assertRaises(ValueError):
             is_cursor_over_mole((100, 100), (100, 100), -1)
+
+    def test_gameplay_elapsed_seconds_excludes_paused_time(self) -> None:
+        self.assertEqual(gameplay_elapsed_seconds(10_000, 1_000, 4_000), 5.0)
+
+    def test_gameplay_elapsed_seconds_does_not_go_negative(self) -> None:
+        self.assertEqual(gameplay_elapsed_seconds(1_000, 10_000, 0), 0.0)
 
 
 if __name__ == "__main__":

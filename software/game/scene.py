@@ -100,6 +100,18 @@ def continue_button_rect(width: int, height: int) -> tuple[int, int, int, int]:
     )
 
 
+def pause_button_rect(width: int, height: int) -> tuple[int, int, int, int]:
+    """Return the gameplay pause button rectangle."""
+
+    size = max(46, round(min(width, height) * 0.07))
+    return (
+        width - size - round(width * 0.025),
+        round(height * 0.025),
+        size,
+        size,
+    )
+
+
 def draw_loading_screen(screen: object, progress: float) -> None:
     """Draw the loading screen."""
 
@@ -135,6 +147,7 @@ def draw_scene(
     ui: GameplayUi | None = None,
     active_hole_index: int = 4,
     mole_highlighted: bool = False,
+    paused: bool = False,
 ) -> None:
     """Draw the current gameplay frame."""
 
@@ -154,6 +167,8 @@ def draw_scene(
         mole_highlighted=mole_highlighted,
     )
     _draw_cursor(pygame, screen, cursor_position)
+    if paused:
+        _draw_pause_overlay(pygame, screen, width, height)
     pygame.display.flip()
 
 
@@ -369,6 +384,7 @@ def _draw_gameplay_hud(pygame: object, screen: object, width: int, height: int, 
     panel_h = max(54, round(height * 0.075))
     left_panel = pygame.Rect(round(width * 0.075), round(height * 0.025), round(width * 0.17), panel_h)
     timer_panel = pygame.Rect(round(width * 0.27), round(height * 0.025), round(width * 0.23), panel_h)
+    pause_panel = pygame.Rect(pause_button_rect(width, height))
     pygame.draw.rect(screen, PANEL_DARK, left_panel, border_radius=8)
     pygame.draw.rect(screen, PANEL_DARK, timer_panel, border_radius=8)
     _draw_heart(pygame, screen, (left_panel.left - round(panel_h * 0.10), left_panel.centery), round(panel_h * 0.48))
@@ -382,10 +398,48 @@ def _draw_gameplay_hud(pygame: object, screen: object, width: int, height: int, 
     time_surface = hud_font.render(f"{minutes:02d}:{seconds:02d}", True, WHITE)
     screen.blit(time_surface, time_surface.get_rect(center=(timer_panel.centerx + round(timer_panel.width * 0.12), timer_panel.centery)))
     score_surface = small_font.render(f"{ui.score} PTS", True, (72, 38, 22))
-    score_rect = pygame.Rect(width - round(width * 0.18), round(height * 0.025), round(width * 0.12), panel_h)
+    score_width = round(width * 0.12)
+    score_rect = pygame.Rect(pause_panel.left - round(width * 0.018) - score_width, round(height * 0.025), score_width, panel_h)
     pygame.draw.rect(screen, (255, 230, 88), score_rect, border_radius=8)
     pygame.draw.rect(screen, BUTTON_YELLOW_DARK, score_rect, width=3, border_radius=8)
     screen.blit(score_surface, score_surface.get_rect(center=score_rect.center))
+    _draw_pause_button(pygame, screen, pause_panel, active=False)
+
+
+def _draw_pause_button(pygame: object, screen: object, rect: object, active: bool) -> None:
+    color = (255, 230, 88) if active else BUTTON_GREEN
+    shadow_color = BUTTON_YELLOW_DARK if active else BUTTON_GREEN_DARK
+    pygame.draw.rect(screen, shadow_color, rect.move(0, max(4, rect.height // 10)), border_radius=8)
+    pygame.draw.rect(screen, color, rect, border_radius=8)
+    bar_width = max(6, rect.width // 6)
+    bar_height = round(rect.height * 0.50)
+    gap = max(6, rect.width // 8)
+    for offset in (-gap, gap):
+        pygame.draw.rect(
+            screen,
+            WHITE,
+            (
+                rect.centerx + offset - bar_width // 2,
+                rect.centery - bar_height // 2,
+                bar_width,
+                bar_height,
+            ),
+            border_radius=3,
+        )
+
+
+def _draw_pause_overlay(pygame: object, screen: object, width: int, height: int) -> None:
+    overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+    overlay.fill((20, 35, 20, 140))
+    screen.blit(overlay, (0, 0))
+    panel = pygame.Rect(round(width * 0.28), round(height * 0.35), round(width * 0.44), round(height * 0.22))
+    pygame.draw.rect(screen, (255, 246, 203), panel, border_radius=18)
+    pygame.draw.rect(screen, (126, 68, 37), panel, width=max(4, width // 180), border_radius=18)
+    title_font = _font(pygame, width, 0.07, bold=True)
+    label_font = _font(pygame, width, 0.026, bold=True)
+    _center_text(screen, title_font, "Paused", (72, 38, 22), (width // 2, round(height * 0.425)))
+    _center_text(screen, label_font, "Click pause or press P to resume", (92, 54, 32), (width // 2, round(height * 0.505)))
+    _draw_pause_button(pygame, screen, pygame.Rect(pause_button_rect(width, height)), active=True)
 
 
 def _draw_holes(
