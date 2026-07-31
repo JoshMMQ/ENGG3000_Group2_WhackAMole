@@ -1,6 +1,6 @@
 import unittest
 
-from software.game.scene import GameplayUi, continue_button_rect, hole_positions, start_button_rect
+from software.game.scene import GameplayUi, active_mole_position, continue_button_rect, hole_positions, start_button_rect
 
 
 class SceneLayoutTests(unittest.TestCase):
@@ -17,6 +17,9 @@ class SceneLayoutTests(unittest.TestCase):
             self.assertLess(x, 900)
             self.assertGreater(y, 0)
             self.assertLess(y, 900)
+
+    def test_active_mole_uses_centre_hole(self) -> None:
+        self.assertEqual(active_mole_position(900, 900), (450, 558))
 
     def test_start_button_stays_inside_window(self) -> None:
         x, y, width, height = start_button_rect(900, 900)

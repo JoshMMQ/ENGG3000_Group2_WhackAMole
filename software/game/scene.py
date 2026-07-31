@@ -59,6 +59,12 @@ def hole_positions(width: int, height: int) -> tuple[ScreenPosition, ...]:
     return tuple((x, y) for y in y_values for x in x_values)
 
 
+def active_mole_position(width: int, height: int) -> ScreenPosition:
+    """Return the current single active mole position."""
+
+    return hole_positions(width, height)[4]
+
+
 def start_button_rect(width: int, height: int) -> tuple[int, int, int, int]:
     """Return the title-screen start button rectangle."""
 
@@ -123,7 +129,7 @@ def draw_scene(screen: object, cursor_position: ScreenPosition, ui: GameplayUi |
     active_ui = ui or GameplayUi()
     _draw_green_field_background(pygame, screen, width, height)
     _draw_gameplay_hud(pygame, screen, width, height, active_ui)
-    _draw_holes(pygame, screen, hole_positions(width, height), width, height)
+    _draw_holes(pygame, screen, hole_positions(width, height), width, height, active_index=4)
     _draw_cursor(pygame, screen, cursor_position)
     pygame.display.flip()
 
@@ -359,9 +365,38 @@ def _draw_gameplay_hud(pygame: object, screen: object, width: int, height: int, 
     screen.blit(score_surface, score_surface.get_rect(center=score_rect.center))
 
 
-def _draw_holes(pygame: object, screen: object, holes: Sequence[ScreenPosition], width: int, height: int) -> None:
-    for x, y in holes:
-        _draw_hole(pygame, screen, x, y, round(width * 0.15), round(height * 0.075))
+def _draw_holes(
+    pygame: object,
+    screen: object,
+    holes: Sequence[ScreenPosition],
+    width: int,
+    height: int,
+    active_index: int | None = None,
+) -> None:
+    hole_w = round(width * 0.15)
+    hole_h = round(height * 0.075)
+    for index, (x, y) in enumerate(holes):
+        if index == active_index:
+            _draw_active_hole(pygame, screen, x, y, width, height, hole_w, hole_h)
+        else:
+            _draw_hole(pygame, screen, x, y, hole_w, hole_h)
+
+
+def _draw_active_hole(
+    pygame: object,
+    screen: object,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    hole_w: int,
+    hole_h: int,
+) -> None:
+    _draw_hole(pygame, screen, x, y, hole_w, hole_h)
+    mole_w = round(width * 0.12)
+    mole_h = round(height * 0.18)
+    _draw_mole_shape(pygame, screen, (x, y - round(hole_h * 1.15)), mole_w, mole_h, "plain")
+    _draw_dirt_mound(pygame, screen, x, y + round(hole_h * 0.18), round(hole_w * 1.20), round(hole_h * 0.72))
 
 
 def _draw_hole(pygame: object, screen: object, x: int, y: int, hole_w: int, hole_h: int) -> None:
