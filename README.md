@@ -45,7 +45,7 @@ ENGG3000 has tasked its students to design a build a full body "Whack a Mole" ga
 | FR-08  | Must     | The player receives visible and audible hit, miss, warning, and session feedback. | Derived         |
 | FR-09  | Must     | Invalid, stale, or missing sensor data does not create a score or unsafe cursor jump. | Derived         |
 | FR-10  | Should   | The game records session score, level, duration, and selected quality data. | Project goal    |
-| FR-11  | Should   | The final game presents a 3D playfield while preserving verified gameplay rules. | Team goal       |
+| FR-11  | Should   | The final game presents a 2D playfield while preserving verified gameplay rules. | Team goal       |
 | FR-12  | Could    | The player can view a local session-best score.                             | Gamer value     |
 | NFR-01 | Must     | Tracking is accurate and responsive enough for fair gameplay.               | Brief           |
 | NFR-02 | Must     | The game remains stable through loss and recovery of one sensor node.       | Derived         |
