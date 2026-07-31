@@ -44,6 +44,7 @@ STATIC_POSITION_M = (1.5, 1.5)
 FRAME_RATE = 60
 LOADING_SECONDS = 1.0
 GAME_SECONDS = 60
+MOLE_INTERVAL_SECONDS = 1.75
 
 
 def mapped_cursor_position(
@@ -71,13 +72,26 @@ def static_cursor_position(mapper: Optional[CoordinateMapper] = None) -> ScreenP
     return mapped_cursor_position(STATIC_POSITION_M, mapper)
 
 
-def draw_frame(screen: object, cursor_position: ScreenPosition, ui: GameplayUi | None = None) -> None:
+def active_hole_index_at(elapsed_s: float, interval_s: float = MOLE_INTERVAL_SECONDS) -> int:
+    """Return the active mole hole index for elapsed gameplay time."""
+
+    if interval_s <= 0:
+        raise ValueError("interval_s must be positive")
+    return int(max(0.0, elapsed_s) // interval_s) % 9
+
+
+def draw_frame(
+    screen: object,
+    cursor_position: ScreenPosition,
+    ui: GameplayUi | None = None,
+    active_hole_index: int = 4,
+) -> None:
     """Draw the current prototype frame."""
 
     if pygame is None:
         raise RuntimeError("pygame is required to draw the game window")
 
-    draw_scene(screen, cursor_position, ui)
+    draw_scene(screen, cursor_position, ui, active_hole_index)
 
 
 def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
@@ -107,7 +121,12 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
         cursor_position = mapped_cursor_position(simulated_source.position_at(0.0), mapper)
         draw_loading_screen(screen, 1.0)
         draw_title_screen(screen)
-        draw_frame(screen, cursor_position, GameplayUi(score=score, lives=3, remaining_seconds=GAME_SECONDS))
+        draw_frame(
+            screen,
+            cursor_position,
+            GameplayUi(score=score, lives=3, remaining_seconds=GAME_SECONDS),
+            active_hole_index_at(0.0),
+        )
         draw_game_over_screen(screen, score)
         if udp_source is not None:
             udp_source.close()
@@ -165,7 +184,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     mapper = create_mapper(screen.get_size())
                     cursor_position = mapped_cursor_position(physical_position, mapper)
                     ui = GameplayUi(score=score, lives=3, remaining_seconds=remaining_seconds)
-                    draw_frame(screen, cursor_position, ui)
+                    draw_frame(screen, cursor_position, ui, active_hole_index_at(game_elapsed_s))
             clock.tick(FRAME_RATE)
     finally:
         if udp_source is not None:

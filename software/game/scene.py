@@ -59,10 +59,11 @@ def hole_positions(width: int, height: int) -> tuple[ScreenPosition, ...]:
     return tuple((x, y) for y in y_values for x in x_values)
 
 
-def active_mole_position(width: int, height: int) -> ScreenPosition:
+def active_mole_position(width: int, height: int, active_hole_index: int = 4) -> ScreenPosition:
     """Return the current single active mole position."""
 
-    return hole_positions(width, height)[4]
+    holes = hole_positions(width, height)
+    return holes[active_hole_index % len(holes)]
 
 
 def start_button_rect(width: int, height: int) -> tuple[int, int, int, int]:
@@ -120,7 +121,12 @@ def draw_title_screen(screen: object) -> None:
     pygame.display.flip()
 
 
-def draw_scene(screen: object, cursor_position: ScreenPosition, ui: GameplayUi | None = None) -> None:
+def draw_scene(
+    screen: object,
+    cursor_position: ScreenPosition,
+    ui: GameplayUi | None = None,
+    active_hole_index: int = 4,
+) -> None:
     """Draw the current gameplay frame."""
 
     import pygame
@@ -129,7 +135,7 @@ def draw_scene(screen: object, cursor_position: ScreenPosition, ui: GameplayUi |
     active_ui = ui or GameplayUi()
     _draw_green_field_background(pygame, screen, width, height)
     _draw_gameplay_hud(pygame, screen, width, height, active_ui)
-    _draw_holes(pygame, screen, hole_positions(width, height), width, height, active_index=4)
+    _draw_holes(pygame, screen, hole_positions(width, height), width, height, active_index=active_hole_index)
     _draw_cursor(pygame, screen, cursor_position)
     pygame.display.flip()
 

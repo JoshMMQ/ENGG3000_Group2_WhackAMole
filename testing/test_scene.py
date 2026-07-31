@@ -21,6 +21,15 @@ class SceneLayoutTests(unittest.TestCase):
     def test_active_mole_uses_centre_hole(self) -> None:
         self.assertEqual(active_mole_position(900, 900), (450, 558))
 
+    def test_active_mole_can_use_each_hole_index(self) -> None:
+        holes = hole_positions(900, 900)
+
+        self.assertEqual(active_mole_position(900, 900, active_hole_index=0), holes[0])
+        self.assertEqual(active_mole_position(900, 900, active_hole_index=8), holes[8])
+
+    def test_active_mole_index_wraps_to_hole_count(self) -> None:
+        self.assertEqual(active_mole_position(900, 900, active_hole_index=9), hole_positions(900, 900)[0])
+
     def test_start_button_stays_inside_window(self) -> None:
         x, y, width, height = start_button_rect(900, 900)
 
