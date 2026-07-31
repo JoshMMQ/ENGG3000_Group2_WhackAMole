@@ -52,6 +52,15 @@ MOLE_INTERVAL_SECONDS = 1.75
 HIT_RADIUS_PX = 70
 
 
+def randomized_hole_index(slot: int, hole_count: int = 9) -> int:
+    """Return a repeatable random-looking hole index for a time slot."""
+
+    if hole_count <= 0:
+        raise ValueError("hole_count must be positive")
+    normalized_slot = max(0, slot)
+    return (normalized_slot * 5 + normalized_slot // 2 + 3) % hole_count
+
+
 def mapped_cursor_position(
     physical_position: PhysicalPosition,
     mapper: Optional[CoordinateMapper] = None,
@@ -82,7 +91,8 @@ def active_hole_index_at(elapsed_s: float, interval_s: float = MOLE_INTERVAL_SEC
 
     if interval_s <= 0:
         raise ValueError("interval_s must be positive")
-    return int(max(0.0, elapsed_s) // interval_s) % 9
+    slot = int(max(0.0, elapsed_s) // interval_s)
+    return randomized_hole_index(slot)
 
 
 def scaled_hit_radius(screen_size: ScreenPosition, base_radius_px: int = HIT_RADIUS_PX) -> int:

@@ -6,6 +6,7 @@ from software.game.main import (
     gameplay_elapsed_seconds,
     is_cursor_over_mole,
     mapped_cursor_position,
+    randomized_hole_index,
     scaled_hit_radius,
     static_cursor_position,
 )
@@ -23,17 +24,32 @@ class RenderWindowTests(unittest.TestCase):
 
         self.assertEqual(mapper.physical_to_screen(3.0, 3.0), (1919, 1079))
 
-    def test_active_hole_index_changes_on_interval(self) -> None:
-        self.assertEqual(active_hole_index_at(0.0, interval_s=1.75), 0)
-        self.assertEqual(active_hole_index_at(1.74, interval_s=1.75), 0)
-        self.assertEqual(active_hole_index_at(1.75, interval_s=1.75), 1)
+    def test_active_hole_index_changes_randomly_on_interval(self) -> None:
+        self.assertEqual(active_hole_index_at(0.0, interval_s=1.75), 3)
+        self.assertEqual(active_hole_index_at(1.74, interval_s=1.75), 3)
+        self.assertEqual(active_hole_index_at(1.75, interval_s=1.75), 8)
 
-    def test_active_hole_index_wraps_after_nine_holes(self) -> None:
-        self.assertEqual(active_hole_index_at(15.75, interval_s=1.75), 0)
+    def test_active_hole_index_stays_inside_hole_range(self) -> None:
+        for slot in range(30):
+            index = active_hole_index_at(slot * 1.75, interval_s=1.75)
+            self.assertGreaterEqual(index, 0)
+            self.assertLess(index, 9)
 
     def test_active_hole_index_rejects_invalid_interval(self) -> None:
         with self.assertRaises(ValueError):
             active_hole_index_at(0.0, interval_s=0.0)
+
+    def test_randomized_hole_index_is_repeatable(self) -> None:
+        self.assertEqual([randomized_hole_index(slot) for slot in range(6)], [3, 8, 5, 1, 7, 3])
+
+    def test_randomized_hole_index_avoids_adjacent_repeats(self) -> None:
+        sequence = [randomized_hole_index(slot) for slot in range(12)]
+
+        self.assertTrue(all(left != right for left, right in zip(sequence, sequence[1:])))
+
+    def test_randomized_hole_index_rejects_invalid_hole_count(self) -> None:
+        with self.assertRaises(ValueError):
+            randomized_hole_index(0, hole_count=0)
 
     def test_scaled_hit_radius_uses_window_size(self) -> None:
         self.assertEqual(scaled_hit_radius((900, 900), base_radius_px=70), 70)
