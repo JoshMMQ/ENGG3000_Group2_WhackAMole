@@ -14,6 +14,7 @@ try:
     from .coordinates import CoordinateMapper, ScreenPosition
     from .scene import (
         GameplayUi,
+        active_mole_position,
         continue_button_rect,
         draw_game_over_screen,
         draw_loading_screen,
@@ -27,6 +28,7 @@ except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
     from scene import (
         GameplayUi,
+        active_mole_position,
         continue_button_rect,
         draw_game_over_screen,
         draw_loading_screen,
@@ -45,6 +47,7 @@ FRAME_RATE = 60
 LOADING_SECONDS = 1.0
 GAME_SECONDS = 60
 MOLE_INTERVAL_SECONDS = 1.75
+HIT_RADIUS_PX = 70
 
 
 def mapped_cursor_position(
@@ -80,18 +83,41 @@ def active_hole_index_at(elapsed_s: float, interval_s: float = MOLE_INTERVAL_SEC
     return int(max(0.0, elapsed_s) // interval_s) % 9
 
 
+def scaled_hit_radius(screen_size: ScreenPosition, base_radius_px: int = HIT_RADIUS_PX) -> int:
+    """Return a hit radius scaled for the current window size."""
+
+    width, height = screen_size
+    scale = min(width, height) / WINDOW_WIDTH_PX
+    return max(20, round(base_radius_px * scale))
+
+
+def is_cursor_over_mole(
+    cursor_position: ScreenPosition,
+    mole_position: ScreenPosition,
+    radius_px: int,
+) -> bool:
+    """Return whether the cursor is inside the active mole hit preview radius."""
+
+    if radius_px < 0:
+        raise ValueError("radius_px must be non-negative")
+    dx = cursor_position[0] - mole_position[0]
+    dy = cursor_position[1] - mole_position[1]
+    return dx * dx + dy * dy <= radius_px * radius_px
+
+
 def draw_frame(
     screen: object,
     cursor_position: ScreenPosition,
     ui: GameplayUi | None = None,
     active_hole_index: int = 4,
+    mole_highlighted: bool = False,
 ) -> None:
     """Draw the current prototype frame."""
 
     if pygame is None:
         raise RuntimeError("pygame is required to draw the game window")
 
-    draw_scene(screen, cursor_position, ui, active_hole_index)
+    draw_scene(screen, cursor_position, ui, active_hole_index, mole_highlighted)
 
 
 def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
@@ -126,6 +152,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
             cursor_position,
             GameplayUi(score=score, lives=3, remaining_seconds=GAME_SECONDS),
             active_hole_index_at(0.0),
+            False,
         )
         draw_game_over_screen(screen, score)
         if udp_source is not None:
@@ -184,7 +211,14 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     mapper = create_mapper(screen.get_size())
                     cursor_position = mapped_cursor_position(physical_position, mapper)
                     ui = GameplayUi(score=score, lives=3, remaining_seconds=remaining_seconds)
-                    draw_frame(screen, cursor_position, ui, active_hole_index_at(game_elapsed_s))
+                    active_hole_index = active_hole_index_at(game_elapsed_s)
+                    mole_position = active_mole_position(*screen.get_size(), active_hole_index=active_hole_index)
+                    mole_highlighted = is_cursor_over_mole(
+                        cursor_position,
+                        mole_position,
+                        scaled_hit_radius(screen.get_size()),
+                    )
+                    draw_frame(screen, cursor_position, ui, active_hole_index, mole_highlighted)
             clock.tick(FRAME_RATE)
     finally:
         if udp_source is not None:

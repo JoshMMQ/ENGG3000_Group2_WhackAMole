@@ -1,6 +1,12 @@
 import unittest
 
-from software.game.scene import GameplayUi, active_mole_position, continue_button_rect, hole_positions, start_button_rect
+from software.game.scene import (
+    GameplayUi,
+    active_mole_position,
+    continue_button_rect,
+    hole_positions,
+    start_button_rect,
+)
 
 
 class SceneLayoutTests(unittest.TestCase):

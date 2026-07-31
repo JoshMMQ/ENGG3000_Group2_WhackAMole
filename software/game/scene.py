@@ -26,9 +26,14 @@ DIRT_DARK = (82, 52, 34)
 DIRT_MID = (111, 73, 49)
 DIRT_LIGHT = (129, 84, 55)
 MOLE_BODY = (43, 45, 51)
+MOLE_HIGHLIGHT_BODY = (65, 92, 180)
+MOLE_CUTE_BODY = (136, 105, 78)
+MOLE_CUTE_BODY_DARK = (72, 52, 39)
+MOLE_CUTE_MUZZLE = (250, 188, 184)
 MOLE_FACE = (189, 104, 76)
 MOLE_FACE_DARK = (128, 57, 50)
 MOLE_BLACK = (18, 19, 21)
+HIT_FLASH_COLOR = (255, 231, 82)
 WHITE = (255, 255, 255)
 PANEL_DARK = (86, 40, 22)
 BUTTON_GREEN = (86, 194, 112)
@@ -40,6 +45,9 @@ TITLE_SHADOW = (70, 22, 26)
 TITLE_EDGE = (116, 49, 35)
 CURSOR_COLOR = (64, 199, 255)
 CURSOR_OUTLINE_COLOR = (248, 253, 255)
+HAMMER_WOOD = (194, 119, 31)
+HAMMER_WOOD_LIGHT = (231, 160, 55)
+HAMMER_WOOD_DARK = (121, 72, 24)
 
 
 @dataclass(frozen=True)
@@ -126,6 +134,7 @@ def draw_scene(
     cursor_position: ScreenPosition,
     ui: GameplayUi | None = None,
     active_hole_index: int = 4,
+    mole_highlighted: bool = False,
 ) -> None:
     """Draw the current gameplay frame."""
 
@@ -135,7 +144,15 @@ def draw_scene(
     active_ui = ui or GameplayUi()
     _draw_green_field_background(pygame, screen, width, height)
     _draw_gameplay_hud(pygame, screen, width, height, active_ui)
-    _draw_holes(pygame, screen, hole_positions(width, height), width, height, active_index=active_hole_index)
+    _draw_holes(
+        pygame,
+        screen,
+        hole_positions(width, height),
+        width,
+        height,
+        active_index=active_hole_index,
+        mole_highlighted=mole_highlighted,
+    )
     _draw_cursor(pygame, screen, cursor_position)
     pygame.display.flip()
 
@@ -378,12 +395,13 @@ def _draw_holes(
     width: int,
     height: int,
     active_index: int | None = None,
+    mole_highlighted: bool = False,
 ) -> None:
     hole_w = round(width * 0.15)
     hole_h = round(height * 0.075)
     for index, (x, y) in enumerate(holes):
         if index == active_index:
-            _draw_active_hole(pygame, screen, x, y, width, height, hole_w, hole_h)
+            _draw_active_hole(pygame, screen, x, y, width, height, hole_w, hole_h, mole_highlighted)
         else:
             _draw_hole(pygame, screen, x, y, hole_w, hole_h)
 
@@ -397,11 +415,26 @@ def _draw_active_hole(
     height: int,
     hole_w: int,
     hole_h: int,
+    mole_highlighted: bool,
 ) -> None:
     _draw_hole(pygame, screen, x, y, hole_w, hole_h)
+    if mole_highlighted:
+        pygame.draw.ellipse(
+            screen,
+            HIT_FLASH_COLOR,
+            (x - round(hole_w * 0.62), y - round(hole_h * 0.62), round(hole_w * 1.24), round(hole_h * 1.24)),
+            width=max(4, hole_w // 18),
+        )
     mole_w = round(width * 0.12)
     mole_h = round(height * 0.18)
-    _draw_mole_shape(pygame, screen, (x, y - round(hole_h * 1.15)), mole_w, mole_h, "plain")
+    _draw_cute_mole(
+        pygame,
+        screen,
+        (x, y - round(hole_h * 1.10)),
+        mole_w,
+        mole_h,
+        highlighted=mole_highlighted,
+    )
     _draw_dirt_mound(pygame, screen, x, y + round(hole_h * 0.18), round(hole_w * 1.20), round(hole_h * 0.72))
 
 
@@ -442,6 +475,83 @@ def _draw_mole(
     _draw_dirt_mound(pygame, screen, x, y + round(height * 0.04), round(width * 0.17), round(height * 0.07))
 
 
+def _draw_cute_mole(
+    pygame: object,
+    screen: object,
+    centre: ScreenPosition,
+    body_w: int,
+    body_h: int,
+    highlighted: bool,
+) -> None:
+    x, y = centre
+    body_color = (161, 124, 88) if highlighted else MOLE_CUTE_BODY
+    if highlighted:
+        pygame.draw.ellipse(
+            screen,
+            HIT_FLASH_COLOR,
+            (
+                x - round(body_w * 0.68),
+                y - round(body_h * 0.50),
+                round(body_w * 1.36),
+                round(body_h * 1.02),
+            ),
+            width=max(4, body_w // 18),
+        )
+
+    body_rect = pygame.Rect(
+        x - round(body_w * 0.44),
+        y - round(body_h * 0.50),
+        round(body_w * 0.88),
+        round(body_h * 0.92),
+    )
+    pygame.draw.ellipse(screen, MOLE_CUTE_BODY_DARK, body_rect.inflate(max(4, body_w // 18), max(4, body_w // 18)))
+    pygame.draw.ellipse(screen, body_color, body_rect)
+
+    muzzle_radius = max(16, round(body_w * 0.20))
+    pygame.draw.circle(screen, MOLE_CUTE_MUZZLE, (x, y - round(body_h * 0.08)), muzzle_radius)
+    pygame.draw.circle(screen, MOLE_CUTE_BODY_DARK, (x, y - round(body_h * 0.20)), max(7, round(body_w * 0.07)))
+    pygame.draw.circle(screen, (58, 45, 42), (x - round(body_w * 0.27), y - round(body_h * 0.18)), max(5, round(body_w * 0.05)))
+    pygame.draw.circle(screen, (58, 45, 42), (x + round(body_w * 0.27), y - round(body_h * 0.18)), max(5, round(body_w * 0.05)))
+    pygame.draw.line(screen, MOLE_CUTE_BODY_DARK, (x, y - round(body_h * 0.13)), (x, y + round(body_h * 0.02)), max(3, body_w // 28))
+    pygame.draw.line(
+        screen,
+        MOLE_CUTE_BODY_DARK,
+        (x, y + round(body_h * 0.02)),
+        (x - round(body_w * 0.10), y + round(body_h * 0.12)),
+        max(3, body_w // 32),
+    )
+    pygame.draw.line(
+        screen,
+        MOLE_CUTE_BODY_DARK,
+        (x, y + round(body_h * 0.02)),
+        (x + round(body_w * 0.10), y + round(body_h * 0.12)),
+        max(3, body_w // 32),
+    )
+
+    for side in (-1, 1):
+        paw_centre = (x + side * round(body_w * 0.44), y + round(body_h * 0.30))
+        paw_rect = pygame.Rect(0, 0, round(body_w * 0.34), round(body_h * 0.22))
+        paw_rect.center = paw_centre
+        pygame.draw.ellipse(screen, MOLE_CUTE_BODY_DARK, paw_rect.inflate(max(3, body_w // 30), max(3, body_w // 30)))
+        pygame.draw.ellipse(screen, MOLE_CUTE_MUZZLE, paw_rect)
+        for claw in (-1, 0, 1):
+            claw_x = paw_centre[0] + side * round(body_w * (0.10 + claw * 0.055))
+            claw_y = paw_centre[1] + round(body_h * 0.05)
+            pygame.draw.polygon(
+                screen,
+                WHITE,
+                (
+                    (claw_x, claw_y),
+                    (claw_x + side * round(body_w * 0.12), claw_y + round(body_h * 0.03)),
+                    (claw_x + side * round(body_w * 0.02), claw_y + round(body_h * 0.11)),
+                ),
+            )
+
+    if highlighted:
+        marker_font = _font(pygame, body_w * 6, 0.045, bold=True)
+        _center_text(screen, marker_font, "HIT", WHITE, (x, y - round(body_h * 0.58)))
+
+
 def _draw_mole_shape(
     pygame: object,
     screen: object,
@@ -452,14 +562,44 @@ def _draw_mole_shape(
 ) -> None:
     x, y = centre
     body_rect = pygame.Rect(x - body_w // 2, y - body_h // 2, body_w, body_h)
-    pygame.draw.ellipse(screen, MOLE_BODY, body_rect)
+    body_color = MOLE_HIGHLIGHT_BODY if variant == "hit" else MOLE_BODY
+    pygame.draw.ellipse(screen, body_color, body_rect)
     eye_y = y - round(body_h * 0.16)
     for eye_x in (x - round(body_w * 0.28), x + round(body_w * 0.28)):
         pygame.draw.circle(screen, MOLE_BLACK, (eye_x, eye_y), max(6, body_w // 13))
         pygame.draw.circle(screen, WHITE, (eye_x + max(1, body_w // 35), eye_y - max(1, body_w // 35)), max(2, body_w // 28))
     face_rect = pygame.Rect(x - round(body_w * 0.18), y + round(body_h * 0.02), round(body_w * 0.36), round(body_h * 0.26))
     pygame.draw.ellipse(screen, MOLE_FACE, face_rect)
-    if variant == "open":
+    if variant == "hit":
+        pygame.draw.line(
+            screen,
+            WHITE,
+            (x - round(body_w * 0.18), y - round(body_h * 0.05)),
+            (x - round(body_w * 0.04), y + round(body_h * 0.08)),
+            max(4, body_w // 18),
+        )
+        pygame.draw.line(
+            screen,
+            WHITE,
+            (x - round(body_w * 0.04), y - round(body_h * 0.05)),
+            (x - round(body_w * 0.18), y + round(body_h * 0.08)),
+            max(4, body_w // 18),
+        )
+        pygame.draw.line(
+            screen,
+            WHITE,
+            (x + round(body_w * 0.04), y - round(body_h * 0.05)),
+            (x + round(body_w * 0.18), y + round(body_h * 0.08)),
+            max(4, body_w // 18),
+        )
+        pygame.draw.line(
+            screen,
+            WHITE,
+            (x + round(body_w * 0.18), y - round(body_h * 0.05)),
+            (x + round(body_w * 0.04), y + round(body_h * 0.08)),
+            max(4, body_w // 18),
+        )
+    elif variant == "open":
         pygame.draw.ellipse(screen, MOLE_FACE_DARK, (x - round(body_w * 0.12), y + round(body_h * 0.12), round(body_w * 0.24), round(body_h * 0.20)))
     else:
         pygame.draw.ellipse(screen, MOLE_BLACK, (x - round(body_w * 0.07), y + round(body_h * 0.12), round(body_w * 0.14), round(body_h * 0.07)))
@@ -519,10 +659,42 @@ def _draw_hourglass(pygame: object, screen: object, centre: ScreenPosition, size
 
 def _draw_cursor(pygame: object, screen: object, cursor_position: ScreenPosition) -> None:
     x, y = cursor_position
-    pygame.draw.circle(screen, CURSOR_OUTLINE_COLOR, (x, y), 22)
-    pygame.draw.circle(screen, CURSOR_COLOR, (x, y), 17)
-    pygame.draw.line(screen, (24, 73, 92), (x - 26, y), (x + 26, y), 3)
-    pygame.draw.line(screen, (24, 73, 92), (x, y - 26), (x, y + 26), 3)
+    size = max(42, round(min(screen.get_size()) * 0.085))
+    handle_start = (x + round(size * 0.42), y + round(size * 0.34))
+    handle_end = (x - round(size * 0.32), y - round(size * 0.36))
+    pygame.draw.line(screen, HAMMER_WOOD_DARK, handle_start, handle_end, max(10, size // 5))
+    pygame.draw.line(screen, HAMMER_WOOD, handle_start, handle_end, max(7, size // 7))
+    pygame.draw.line(
+        screen,
+        HAMMER_WOOD_LIGHT,
+        (handle_start[0] - round(size * 0.04), handle_start[1] - round(size * 0.04)),
+        (handle_end[0] - round(size * 0.04), handle_end[1] - round(size * 0.04)),
+        max(2, size // 24),
+    )
+
+    head = (
+        (x - round(size * 0.75), y - round(size * 0.48)),
+        (x - round(size * 0.32), y - round(size * 0.86)),
+        (x + round(size * 0.14), y - round(size * 0.42)),
+        (x - round(size * 0.28), y - round(size * 0.03)),
+    )
+    pygame.draw.polygon(screen, HAMMER_WOOD_DARK, head)
+    inset_head = (
+        (x - round(size * 0.66), y - round(size * 0.48)),
+        (x - round(size * 0.32), y - round(size * 0.78)),
+        (x + round(size * 0.04), y - round(size * 0.42)),
+        (x - round(size * 0.29), y - round(size * 0.12)),
+    )
+    pygame.draw.polygon(screen, HAMMER_WOOD_LIGHT, inset_head)
+    for offset in (-0.22, 0.0, 0.22):
+        pygame.draw.line(
+            screen,
+            HAMMER_WOOD_DARK,
+            (x - round(size * (0.58 - offset)), y - round(size * 0.50)),
+            (x - round(size * (0.36 - offset)), y - round(size * 0.68)),
+            max(2, size // 28),
+        )
+    pygame.draw.circle(screen, (35, 58, 42), (x, y), max(4, size // 14), width=max(2, size // 34))
 
 
 def _font(pygame: object, width: int, ratio: float, bold: bool = False) -> object:
