@@ -11,8 +11,8 @@ ENGG3000 has tasked its students to design a build a full body "Whack a Mole" ga
   </li>
   <li><strong>Hardware</strong>
     <ol>
-        <li>ESP32:1</li>
-        <li>UltraSonic: ?</li>
+        <li>ESP32U</li>
+        <li>UltraSonic: RCWL-1601</li>
     </ol>
   </li>
 </ul>
