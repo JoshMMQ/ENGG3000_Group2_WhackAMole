@@ -9,6 +9,7 @@
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include "ultrasonic.cpp"
 
 const char* AP_SSID = "WhackAMole-team2-ESP32";
 const char* AP_PASSWORD = "esp123456789";
@@ -25,6 +26,9 @@ const char* SENSOR_ID = "simulated";
 const uint32_t SEND_INTERVAL_MS = 250;
 const int BATTERY_MV = 3700;
 
+// Pins and name to be changed later
+Ultrasonic left = Ultrasonic(32, 35, "Left", 40);
+
 WiFiUDP udp;
 uint32_t sequenceNumber = 0;
 uint32_t lastSendMs = 0;
@@ -34,6 +38,8 @@ void setup() {
   delay(500);
 
   startAccessPoint();
+  pinMode(left.trigPin, OUTPUT);
+  pinMode(left.echoPin, INPUT);
 }
 
 void loop() {
