@@ -34,8 +34,7 @@ class DistanceAxisMapper:
             raise ValueError("play_area_width_m must be positive")
 
     def position_for_distance(self, distance_mm: int) -> PhysicalPosition:
-        clamped = max(self.min_distance_mm, min(distance_mm, self.max_distance_mm))
-        ratio = (clamped - self.min_distance_mm) / (self.max_distance_mm - self.min_distance_mm)
+        ratio = (distance_mm - self.min_distance_mm) / (self.max_distance_mm - self.min_distance_mm)
         return ratio * self.play_area_width_m, self.fixed_y_m
 
 

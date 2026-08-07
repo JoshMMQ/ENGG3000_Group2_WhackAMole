@@ -27,11 +27,11 @@ class DistanceAxisMapperTests(unittest.TestCase):
         self.assertEqual(mapper.position_for_distance(1500), (1.5, 1.5))
         self.assertEqual(mapper.position_for_distance(2500), (3.0, 1.5))
 
-    def test_clamps_distance_to_axis_bounds(self) -> None:
+    def test_preserves_out_of_range_distance_for_safety_detection(self) -> None:
         mapper = DistanceAxisMapper()
 
-        self.assertEqual(mapper.position_for_distance(0), (0.0, 1.5))
-        self.assertEqual(mapper.position_for_distance(3000), (3.0, 1.5))
+        self.assertLess(mapper.position_for_distance(0)[0], 0.0)
+        self.assertGreater(mapper.position_for_distance(3000)[0], 3.0)
 
     def test_rejects_invalid_range(self) -> None:
         with self.assertRaises(ValueError):

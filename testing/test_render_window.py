@@ -4,10 +4,13 @@ from software.game.main import (
     active_hole_index_at,
     create_mapper,
     gameplay_elapsed_seconds,
+    is_inside_play_area,
+    is_inside_screen_warning_zone,
     is_cursor_over_mole,
     mapped_cursor_position,
     randomized_hole_index,
     scaled_hit_radius,
+    should_clear_screen_warning,
     static_cursor_position,
 )
 
@@ -18,6 +21,45 @@ class RenderWindowTests(unittest.TestCase):
 
     def test_mapped_cursor_position_uses_physical_coordinates(self) -> None:
         self.assertEqual(mapped_cursor_position((3.0, 0.0)), (899, 0))
+
+    def test_inside_play_area_accepts_boundary_positions(self) -> None:
+        self.assertTrue(is_inside_play_area((0.0, 0.0)))
+        self.assertTrue(is_inside_play_area((3.0, 3.0)))
+        self.assertTrue(is_inside_play_area((1.5, 1.5)))
+
+    def test_inside_play_area_rejects_outside_positions(self) -> None:
+        self.assertFalse(is_inside_play_area((-0.01, 1.5)))
+        self.assertFalse(is_inside_play_area((3.01, 1.5)))
+        self.assertFalse(is_inside_play_area((1.5, -0.01)))
+        self.assertFalse(is_inside_play_area((1.5, 3.01)))
+
+    def test_inside_play_area_rejects_invalid_positions(self) -> None:
+        self.assertFalse(is_inside_play_area(("bad", 1.5)))
+        self.assertFalse(is_inside_play_area((float("nan"), 1.5)))
+
+    def test_inside_play_area_rejects_invalid_dimensions(self) -> None:
+        with self.assertRaises(ValueError):
+            is_inside_play_area((1.5, 1.5), width_m=0.0)
+
+    def test_screen_warning_starts_at_fifty_centimetres_from_screen(self) -> None:
+        self.assertTrue(is_inside_screen_warning_zone((1.5, 0.50)))
+        self.assertTrue(is_inside_screen_warning_zone((1.5, 0.49)))
+        self.assertFalse(is_inside_screen_warning_zone((1.5, 0.51)))
+
+    def test_screen_warning_uses_hysteresis_to_clear(self) -> None:
+        self.assertFalse(should_clear_screen_warning((1.5, 0.60)))
+        self.assertTrue(should_clear_screen_warning((1.5, 0.61)))
+
+    def test_screen_warning_rejects_invalid_positions(self) -> None:
+        self.assertFalse(is_inside_screen_warning_zone((1.5, "bad")))
+        self.assertFalse(is_inside_screen_warning_zone((1.5, float("nan"))))
+        self.assertFalse(should_clear_screen_warning((1.5, "bad")))
+
+    def test_screen_warning_rejects_invalid_thresholds(self) -> None:
+        with self.assertRaises(ValueError):
+            is_inside_screen_warning_zone((1.5, 0.5), warning_distance_m=-0.1)
+        with self.assertRaises(ValueError):
+            should_clear_screen_warning((1.5, 0.7), clear_distance_m=-0.1)
 
     def test_create_mapper_uses_active_window_size(self) -> None:
         mapper = create_mapper((1920, 1080))

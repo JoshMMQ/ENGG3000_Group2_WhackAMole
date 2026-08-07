@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 import sys
 from typing import Optional
 
@@ -50,6 +51,11 @@ LOADING_SECONDS = 1.0
 GAME_SECONDS = 60
 MOLE_INTERVAL_SECONDS = 1.75
 HIT_RADIUS_PX = 70
+PLAY_AREA_WIDTH_M = 3.0
+PLAY_AREA_HEIGHT_M = 3.0
+STARTING_LIVES = 3
+SCREEN_WARNING_DISTANCE_M = 0.50
+SCREEN_WARNING_CLEAR_DISTANCE_M = 0.60
 
 
 def randomized_hole_index(slot: int, hole_count: int = 9) -> int:
@@ -72,6 +78,65 @@ def mapped_cursor_position(
     if position is None:
         raise ValueError("cursor position must be valid")
     return position
+
+
+def is_inside_play_area(
+    physical_position: PhysicalPosition,
+    width_m: float = PLAY_AREA_WIDTH_M,
+    height_m: float = PLAY_AREA_HEIGHT_M,
+) -> bool:
+    """Return whether a physical position is inside the playable area."""
+
+    if width_m <= 0 or height_m <= 0:
+        raise ValueError("play area dimensions must be positive")
+    try:
+        x_m = float(physical_position[0])
+        y_m = float(physical_position[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    if not isfinite(x_m) or not isfinite(y_m):
+        return False
+    return 0.0 <= x_m <= width_m and 0.0 <= y_m <= height_m
+
+
+def is_inside_screen_warning_zone(
+    physical_position: PhysicalPosition,
+    warning_distance_m: float = SCREEN_WARNING_DISTANCE_M,
+) -> bool:
+    """Return whether the player is inside the screen-proximity warning zone."""
+
+    if warning_distance_m < 0:
+        raise ValueError("warning_distance_m must be non-negative")
+    try:
+        y_m = float(physical_position[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    if not isfinite(y_m):
+        return False
+    return y_m <= warning_distance_m
+
+
+def should_clear_screen_warning(
+    physical_position: PhysicalPosition,
+    clear_distance_m: float = SCREEN_WARNING_CLEAR_DISTANCE_M,
+) -> bool:
+    """Return whether hysteresis allows the screen warning to clear."""
+
+    if clear_distance_m < 0:
+        raise ValueError("clear_distance_m must be non-negative")
+    try:
+        y_m = float(physical_position[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    if not isfinite(y_m):
+        return False
+    return y_m > clear_distance_m
+
+
+def set_audible_warning_active(active: bool) -> None:
+    """Future hook for laptop speaker or external audible warning hardware."""
+
+    _ = active
 
 
 def create_mapper(screen_size: ScreenPosition = (WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX)) -> CoordinateMapper:
@@ -130,13 +195,24 @@ def draw_frame(
     active_hole_index: int = 4,
     mole_highlighted: bool = False,
     paused: bool = False,
+    safety_alert: bool = False,
+    screen_warning: bool = False,
 ) -> None:
     """Draw the current prototype frame."""
 
     if pygame is None:
         raise RuntimeError("pygame is required to draw the game window")
 
-    draw_scene(screen, cursor_position, ui, active_hole_index, mole_highlighted, paused)
+    draw_scene(
+        screen,
+        cursor_position,
+        ui,
+        active_hole_index,
+        mole_highlighted,
+        paused,
+        safety_alert,
+        screen_warning,
+    )
 
 
 def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
@@ -167,6 +243,8 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
     last_mole_highlighted = False
     game_state = "loading"
     score = 0
+    lives = STARTING_LIVES
+    audible_warning_active = False
 
     if smoke_test:
         cursor_position = mapped_cursor_position(simulated_source.position_at(0.0), mapper)
@@ -175,17 +253,35 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
         draw_frame(
             screen,
             cursor_position,
-            GameplayUi(score=score, lives=3, remaining_seconds=GAME_SECONDS),
+            GameplayUi(score=score, lives=lives, remaining_seconds=GAME_SECONDS),
             active_hole_index_at(0.0),
             False,
         )
         draw_frame(
             screen,
             cursor_position,
-            GameplayUi(score=score, lives=3, remaining_seconds=GAME_SECONDS),
+            GameplayUi(score=score, lives=lives, remaining_seconds=GAME_SECONDS),
             active_hole_index_at(0.0),
             False,
             paused=True,
+        )
+        draw_frame(
+            screen,
+            cursor_position,
+            GameplayUi(score=score, lives=max(0, lives - 1), remaining_seconds=GAME_SECONDS),
+            active_hole_index_at(0.0),
+            False,
+            paused=True,
+            safety_alert=True,
+        )
+        draw_frame(
+            screen,
+            cursor_position,
+            GameplayUi(score=score, lives=lives, remaining_seconds=GAME_SECONDS),
+            active_hole_index_at(0.0),
+            False,
+            paused=True,
+            screen_warning=True,
         )
         draw_game_over_screen(screen, score)
         if udp_source is not None:
@@ -213,26 +309,27 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                             last_active_hole_index = active_hole_index_at(0.0)
                             last_mole_highlighted = False
                             score = 0
+                            lives = STARTING_LIVES
                     elif event.key == pygame.K_p:
                         if game_state == "playing":
                             game_state = "paused"
                             pause_started_ticks = now_ticks
-                        elif game_state == "paused" and pause_started_ticks is not None:
+                        elif game_state in ("paused", "safety_paused") and pause_started_ticks is not None:
                             total_paused_ms += now_ticks - pause_started_ticks
                             pause_started_ticks = None
-                            game_state = "playing"
+                            game_state = "game_over" if lives <= 0 else "playing"
                     elif event.key == pygame.K_g and game_state == "playing":
                         game_state = "game_over"
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     width, height = screen.get_size()
-                    if game_state in ("playing", "paused") and pygame.Rect(pause_button_rect(width, height)).collidepoint(event.pos):
+                    if game_state in ("playing", "paused", "safety_paused") and pygame.Rect(pause_button_rect(width, height)).collidepoint(event.pos):
                         if game_state == "playing":
                             game_state = "paused"
                             pause_started_ticks = now_ticks
                         elif pause_started_ticks is not None:
                             total_paused_ms += now_ticks - pause_started_ticks
                             pause_started_ticks = None
-                            game_state = "playing"
+                            game_state = "game_over" if lives <= 0 else "playing"
                     elif game_state == "title" and pygame.Rect(start_button_rect(width, height)).collidepoint(event.pos):
                         game_state = "playing"
                         game_start_ticks = now_ticks
@@ -242,6 +339,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         last_active_hole_index = active_hole_index_at(0.0)
                         last_mole_highlighted = False
                         score = 0
+                        lives = STARTING_LIVES
                     elif game_state == "game_over" and pygame.Rect(continue_button_rect(width, height)).collidepoint(event.pos):
                         game_state = "playing"
                         game_start_ticks = now_ticks
@@ -251,6 +349,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         last_active_hole_index = active_hole_index_at(0.0)
                         last_mole_highlighted = False
                         score = 0
+                        lives = STARTING_LIVES
 
             if game_state == "loading":
                 progress = (now_ticks - start_ticks) / 1000.0 / LOADING_SECONDS
@@ -261,9 +360,51 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                 draw_title_screen(screen)
             elif game_state == "game_over":
                 draw_game_over_screen(screen, score)
-            elif game_state == "paused":
+            elif game_state == "screen_warning":
+                if not audible_warning_active:
+                    set_audible_warning_active(True)
+                    audible_warning_active = True
+                if udp_source is None:
+                    input_elapsed_s = max(0, now_ticks - game_start_ticks) / 1000.0
+                    physical_position = simulated_source.position_at(input_elapsed_s)
+                else:
+                    physical_position = udp_source.poll_position()
+                if not is_inside_play_area(physical_position):
+                    set_audible_warning_active(False)
+                    audible_warning_active = False
+                    lives = max(0, lives - 1)
+                    game_state = "safety_paused"
+                    remaining_seconds = max(0, GAME_SECONDS - int(last_game_elapsed_s))
+                    draw_frame(
+                        screen,
+                        last_cursor_position,
+                        GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                        last_active_hole_index,
+                        last_mole_highlighted,
+                        paused=True,
+                        safety_alert=True,
+                    )
+                elif should_clear_screen_warning(physical_position):
+                    if pause_started_ticks is not None:
+                        total_paused_ms += now_ticks - pause_started_ticks
+                    pause_started_ticks = None
+                    set_audible_warning_active(False)
+                    audible_warning_active = False
+                    game_state = "playing"
+                else:
+                    remaining_seconds = max(0, GAME_SECONDS - int(last_game_elapsed_s))
+                    draw_frame(
+                        screen,
+                        last_cursor_position,
+                        GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                        last_active_hole_index,
+                        last_mole_highlighted,
+                        paused=True,
+                        screen_warning=True,
+                    )
+            elif game_state in ("paused", "safety_paused"):
                 remaining_seconds = max(0, GAME_SECONDS - int(last_game_elapsed_s))
-                ui = GameplayUi(score=score, lives=3, remaining_seconds=remaining_seconds)
+                ui = GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds)
                 draw_frame(
                     screen,
                     last_cursor_position,
@@ -271,6 +412,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     last_active_hole_index,
                     last_mole_highlighted,
                     paused=True,
+                    safety_alert=game_state == "safety_paused",
                 )
             else:
                 game_elapsed_s = gameplay_elapsed_seconds(now_ticks, game_start_ticks, total_paused_ms)
@@ -284,10 +426,42 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         physical_position = simulated_source.position_at(game_elapsed_s)
                     else:
                         physical_position = udp_source.poll_position()
+                    if not is_inside_play_area(physical_position):
+                        lives = max(0, lives - 1)
+                        game_state = "safety_paused"
+                        pause_started_ticks = now_ticks
+                        remaining_seconds = max(0, GAME_SECONDS - int(last_game_elapsed_s))
+                        draw_frame(
+                            screen,
+                            last_cursor_position,
+                            GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                            last_active_hole_index,
+                            last_mole_highlighted,
+                            paused=True,
+                            safety_alert=True,
+                        )
+                        clock.tick(FRAME_RATE)
+                        continue
+                    if is_inside_screen_warning_zone(physical_position):
+                        game_state = "screen_warning"
+                        pause_started_ticks = now_ticks
+                        set_audible_warning_active(True)
+                        audible_warning_active = True
+                        draw_frame(
+                            screen,
+                            last_cursor_position,
+                            GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                            last_active_hole_index,
+                            last_mole_highlighted,
+                            paused=True,
+                            screen_warning=True,
+                        )
+                        clock.tick(FRAME_RATE)
+                        continue
                     mapper = create_mapper(screen.get_size())
                     cursor_position = mapped_cursor_position(physical_position, mapper)
                     last_cursor_position = cursor_position
-                    ui = GameplayUi(score=score, lives=3, remaining_seconds=remaining_seconds)
+                    ui = GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds)
                     active_hole_index = active_hole_index_at(game_elapsed_s)
                     last_active_hole_index = active_hole_index
                     mole_position = active_mole_position(*screen.get_size(), active_hole_index=active_hole_index)
@@ -300,6 +474,8 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     draw_frame(screen, cursor_position, ui, active_hole_index, mole_highlighted)
             clock.tick(FRAME_RATE)
     finally:
+        if audible_warning_active:
+            set_audible_warning_active(False)
         if udp_source is not None:
             udp_source.close()
         pygame.quit()

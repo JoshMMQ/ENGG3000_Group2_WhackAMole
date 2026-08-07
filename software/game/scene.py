@@ -148,6 +148,8 @@ def draw_scene(
     active_hole_index: int = 4,
     mole_highlighted: bool = False,
     paused: bool = False,
+    safety_alert: bool = False,
+    screen_warning: bool = False,
 ) -> None:
     """Draw the current gameplay frame."""
 
@@ -167,7 +169,11 @@ def draw_scene(
         mole_highlighted=mole_highlighted,
     )
     _draw_cursor(pygame, screen, cursor_position)
-    if paused:
+    if safety_alert:
+        _draw_safety_overlay(pygame, screen, width, height)
+    elif screen_warning:
+        _draw_screen_warning_overlay(pygame, screen, width, height)
+    elif paused:
         _draw_pause_overlay(pygame, screen, width, height)
     pygame.display.flip()
 
@@ -440,6 +446,37 @@ def _draw_pause_overlay(pygame: object, screen: object, width: int, height: int)
     _center_text(screen, title_font, "Paused", (72, 38, 22), (width // 2, round(height * 0.425)))
     _center_text(screen, label_font, "Click pause or press P to resume", (92, 54, 32), (width // 2, round(height * 0.505)))
     _draw_pause_button(pygame, screen, pygame.Rect(pause_button_rect(width, height)), active=True)
+
+
+def _draw_safety_overlay(pygame: object, screen: object, width: int, height: int) -> None:
+    overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+    overlay.fill((88, 24, 18, 165))
+    screen.blit(overlay, (0, 0))
+    panel = pygame.Rect(round(width * 0.18), round(height * 0.31), round(width * 0.64), round(height * 0.32))
+    pygame.draw.rect(screen, (255, 246, 203), panel, border_radius=18)
+    pygame.draw.rect(screen, (192, 68, 45), panel, width=max(5, width // 150), border_radius=18)
+    title_font = _font(pygame, width, 0.055, bold=True)
+    label_font = _font(pygame, width, 0.028, bold=True)
+    small_font = _font(pygame, width, 0.022, bold=True)
+    _center_text(screen, title_font, "Safety Pause", (151, 44, 31), (width // 2, round(height * 0.39)))
+    _center_text(screen, label_font, "Step back inside the 3 x 3 m play area", (72, 38, 22), (width // 2, round(height * 0.48)))
+    _center_text(screen, small_font, "One life lost. Click pause or press P to resume.", (92, 54, 32), (width // 2, round(height * 0.55)))
+    _draw_pause_button(pygame, screen, pygame.Rect(pause_button_rect(width, height)), active=True)
+
+
+def _draw_screen_warning_overlay(pygame: object, screen: object, width: int, height: int) -> None:
+    overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+    overlay.fill((120, 78, 10, 150))
+    screen.blit(overlay, (0, 0))
+    panel = pygame.Rect(round(width * 0.16), round(height * 0.30), round(width * 0.68), round(height * 0.30))
+    pygame.draw.rect(screen, (255, 246, 203), panel, border_radius=18)
+    pygame.draw.rect(screen, (236, 165, 33), panel, width=max(5, width // 150), border_radius=18)
+    title_font = _font(pygame, width, 0.055, bold=True)
+    label_font = _font(pygame, width, 0.028, bold=True)
+    small_font = _font(pygame, width, 0.022, bold=True)
+    _center_text(screen, title_font, "Too Close To Screen", (139, 82, 14), (width // 2, round(height * 0.38)))
+    _center_text(screen, label_font, "Step back from the screen", (72, 38, 22), (width // 2, round(height * 0.47)))
+    _center_text(screen, small_font, "Game resumes when you move past the clear zone.", (92, 54, 32), (width // 2, round(height * 0.535)))
 
 
 def _draw_holes(
