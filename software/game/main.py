@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 from math import isfinite
 import sys
 from typing import Optional
+
+from software.transport.serial_sensor import DEFAULT_BAUD_RATE
 
 try:
     import pygame
@@ -24,8 +27,9 @@ try:
         pause_button_rect,
         start_button_rect,
     )
+    from .sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
-    from .udp_position import UdpPositionSource
+    from .udp_position import TrackingStatus, UdpPositionSource
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
     from scene import (
@@ -39,23 +43,26 @@ except ImportError:
         pause_button_rect,
         start_button_rect,
     )
+    from sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
     from simulated_position import PhysicalPosition, SimulatedPositionSource
-    from udp_position import UdpPositionSource
+    from udp_position import TrackingStatus, UdpPositionSource
 
 
 WINDOW_WIDTH_PX = 900
 WINDOW_HEIGHT_PX = 900
-STATIC_POSITION_M = (1.5, 1.5)
+STATIC_POSITION_M = (0.75, 1.30)
 FRAME_RATE = 60
 LOADING_SECONDS = 1.0
 GAME_SECONDS = 60
 MOLE_INTERVAL_SECONDS = 1.75
 HIT_RADIUS_PX = 70
-PLAY_AREA_WIDTH_M = 3.0
-PLAY_AREA_HEIGHT_M = 3.0
+PLAY_AREA_WIDTH_M = 1.50
+PLAY_AREA_TOP_M = 0.60
+PLAY_AREA_HEIGHT_M = 1.40
+TRACKED_DEPTH_M = 2.00
 STARTING_LIVES = 3
-SCREEN_WARNING_DISTANCE_M = 0.50
-SCREEN_WARNING_CLEAR_DISTANCE_M = 0.60
+SCREEN_WARNING_DISTANCE_M = 0.60
+SCREEN_WARNING_CLEAR_DISTANCE_M = 0.70
 
 
 def randomized_hole_index(slot: int, hole_count: int = 9) -> int:
@@ -84,6 +91,7 @@ def is_inside_play_area(
     physical_position: PhysicalPosition,
     width_m: float = PLAY_AREA_WIDTH_M,
     height_m: float = PLAY_AREA_HEIGHT_M,
+    top_m: float = PLAY_AREA_TOP_M,
 ) -> bool:
     """Return whether a physical position is inside the playable area."""
 
@@ -96,7 +104,26 @@ def is_inside_play_area(
         return False
     if not isfinite(x_m) or not isfinite(y_m):
         return False
-    return 0.0 <= x_m <= width_m and 0.0 <= y_m <= height_m
+    return 0.0 <= x_m <= width_m and top_m <= y_m <= top_m + height_m
+
+
+def is_inside_tracked_footprint(
+    physical_position: PhysicalPosition,
+    width_m: float = PLAY_AREA_WIDTH_M,
+    depth_m: float = TRACKED_DEPTH_M,
+) -> bool:
+    """Return whether a position is inside the full V2 field plus dead zone."""
+
+    if width_m <= 0 or depth_m <= 0:
+        raise ValueError("tracked footprint dimensions must be positive")
+    try:
+        x_m = float(physical_position[0])
+        y_m = float(physical_position[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    if not isfinite(x_m) or not isfinite(y_m):
+        return False
+    return 0.0 <= x_m <= width_m and 0.0 <= y_m <= depth_m
 
 
 def is_inside_screen_warning_zone(
@@ -113,7 +140,7 @@ def is_inside_screen_warning_zone(
         return False
     if not isfinite(y_m):
         return False
-    return y_m <= warning_distance_m
+    return y_m < warning_distance_m
 
 
 def should_clear_screen_warning(
@@ -130,7 +157,7 @@ def should_clear_screen_warning(
         return False
     if not isfinite(y_m):
         return False
-    return y_m > clear_distance_m
+    return y_m >= clear_distance_m
 
 
 def set_audible_warning_active(active: bool) -> None:
@@ -215,10 +242,24 @@ def draw_frame(
     )
 
 
-def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
-    """Open a resizable 900 x 900 window and render a moving cursor."""
+def _close_sensor_overlay(sensor_overlay: Optional[SerialSensorOverlay]) -> None:
+    if sensor_overlay is None:
+        return
+    try:
+        sensor_overlay.close()
+    except Exception as exc:
+        print(f"Unable to close serial overlay cleanly: {exc}", file=sys.stderr)
+
+
+def run(
+    smoke_test: bool = False,
+    input_source: str = "simulated",
+    sensor_overlay: Optional[SerialSensorOverlay] = None,
+) -> int:
+    """Open the game with simulated or V2 paired-range cursor input."""
 
     if pygame is None:
+        _close_sensor_overlay(sensor_overlay)
         print(
             "pygame is required to render the game window. "
             "Install dependencies with: python3 -m pip install -r requirements.txt",
@@ -245,22 +286,34 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
     score = 0
     lives = STARTING_LIVES
     audible_warning_active = False
+    sensor_snapshot = sensor_overlay.poll() if sensor_overlay is not None else None
+
+    def current_gameplay_ui(
+        remaining_seconds: int,
+        displayed_lives: Optional[int] = None,
+    ) -> GameplayUi:
+        return GameplayUi(
+            score=score,
+            lives=lives if displayed_lives is None else displayed_lives,
+            remaining_seconds=remaining_seconds,
+            sensor_overlay=sensor_snapshot,
+        )
 
     if smoke_test:
         cursor_position = mapped_cursor_position(simulated_source.position_at(0.0), mapper)
-        draw_loading_screen(screen, 1.0)
-        draw_title_screen(screen)
+        draw_loading_screen(screen, 1.0, sensor_snapshot)
+        draw_title_screen(screen, sensor_snapshot)
         draw_frame(
             screen,
             cursor_position,
-            GameplayUi(score=score, lives=lives, remaining_seconds=GAME_SECONDS),
+            current_gameplay_ui(GAME_SECONDS),
             active_hole_index_at(0.0),
             False,
         )
         draw_frame(
             screen,
             cursor_position,
-            GameplayUi(score=score, lives=lives, remaining_seconds=GAME_SECONDS),
+            current_gameplay_ui(GAME_SECONDS),
             active_hole_index_at(0.0),
             False,
             paused=True,
@@ -268,7 +321,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
         draw_frame(
             screen,
             cursor_position,
-            GameplayUi(score=score, lives=max(0, lives - 1), remaining_seconds=GAME_SECONDS),
+            current_gameplay_ui(GAME_SECONDS, displayed_lives=max(0, lives - 1)),
             active_hole_index_at(0.0),
             False,
             paused=True,
@@ -277,15 +330,16 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
         draw_frame(
             screen,
             cursor_position,
-            GameplayUi(score=score, lives=lives, remaining_seconds=GAME_SECONDS),
+            current_gameplay_ui(GAME_SECONDS),
             active_hole_index_at(0.0),
             False,
             paused=True,
             screen_warning=True,
         )
-        draw_game_over_screen(screen, score)
+        draw_game_over_screen(screen, score, sensor_snapshot)
         if udp_source is not None:
             udp_source.close()
+        _close_sensor_overlay(sensor_overlay)
         pygame.quit()
         return 0
 
@@ -293,6 +347,8 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
         running = True
         while running:
             now_ticks = pygame.time.get_ticks()
+            if sensor_overlay is not None:
+                sensor_snapshot = sensor_overlay.poll()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -353,13 +409,13 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
 
             if game_state == "loading":
                 progress = (now_ticks - start_ticks) / 1000.0 / LOADING_SECONDS
-                draw_loading_screen(screen, progress)
+                draw_loading_screen(screen, progress, sensor_snapshot)
                 if progress >= 1.0:
                     game_state = "title"
             elif game_state == "title":
-                draw_title_screen(screen)
+                draw_title_screen(screen, sensor_snapshot)
             elif game_state == "game_over":
-                draw_game_over_screen(screen, score)
+                draw_game_over_screen(screen, score, sensor_snapshot)
             elif game_state == "screen_warning":
                 if not audible_warning_active:
                     set_audible_warning_active(True)
@@ -367,9 +423,26 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                 if udp_source is None:
                     input_elapsed_s = max(0, now_ticks - game_start_ticks) / 1000.0
                     physical_position = simulated_source.position_at(input_elapsed_s)
+                    tracking_status = TrackingStatus.PLAYABLE
                 else:
-                    physical_position = udp_source.poll_position()
-                if not is_inside_play_area(physical_position):
+                    tracking = udp_source.poll()
+                    tracking_status = tracking.status
+                    physical_position = tracking.world_position
+                if tracking_status in (TrackingStatus.WAITING, TrackingStatus.TRACKING_LOST):
+                    set_audible_warning_active(False)
+                    audible_warning_active = False
+                    game_state = "tracking_lost"
+                    remaining_seconds = max(0, GAME_SECONDS - int(last_game_elapsed_s))
+                    draw_frame(
+                        screen,
+                        last_cursor_position,
+                        current_gameplay_ui(remaining_seconds),
+                        last_active_hole_index,
+                        False,
+                        paused=True,
+                        safety_alert=True,
+                    )
+                elif physical_position is None or not is_inside_tracked_footprint(physical_position):
                     set_audible_warning_active(False)
                     audible_warning_active = False
                     lives = max(0, lives - 1)
@@ -378,13 +451,15 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     draw_frame(
                         screen,
                         last_cursor_position,
-                        GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                        current_gameplay_ui(remaining_seconds),
                         last_active_hole_index,
                         last_mole_highlighted,
                         paused=True,
                         safety_alert=True,
                     )
-                elif should_clear_screen_warning(physical_position):
+                elif tracking_status == TrackingStatus.PLAYABLE and should_clear_screen_warning(
+                    physical_position
+                ):
                     if pause_started_ticks is not None:
                         total_paused_ms += now_ticks - pause_started_ticks
                     pause_started_ticks = None
@@ -396,15 +471,42 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     draw_frame(
                         screen,
                         last_cursor_position,
-                        GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                        current_gameplay_ui(remaining_seconds),
                         last_active_hole_index,
                         last_mole_highlighted,
                         paused=True,
                         screen_warning=True,
                     )
+            elif game_state == "tracking_lost":
+                tracking = udp_source.poll() if udp_source is not None else None
+                if tracking is not None and tracking.status in (
+                    TrackingStatus.PLAYABLE,
+                    TrackingStatus.DEAD_ZONE,
+                ):
+                    if pause_started_ticks is not None:
+                        total_paused_ms += now_ticks - pause_started_ticks
+                    pause_started_ticks = None
+                    if tracking.status == TrackingStatus.DEAD_ZONE:
+                        game_state = "screen_warning"
+                        pause_started_ticks = now_ticks
+                        set_audible_warning_active(True)
+                        audible_warning_active = True
+                    else:
+                        game_state = "playing"
+                else:
+                    remaining_seconds = max(0, GAME_SECONDS - int(last_game_elapsed_s))
+                    draw_frame(
+                        screen,
+                        last_cursor_position,
+                        current_gameplay_ui(remaining_seconds),
+                        last_active_hole_index,
+                        False,
+                        paused=True,
+                        safety_alert=True,
+                    )
             elif game_state in ("paused", "safety_paused"):
                 remaining_seconds = max(0, GAME_SECONDS - int(last_game_elapsed_s))
-                ui = GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds)
+                ui = current_gameplay_ui(remaining_seconds)
                 draw_frame(
                     screen,
                     last_cursor_position,
@@ -420,13 +522,30 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                 remaining_seconds = max(0, GAME_SECONDS - int(game_elapsed_s))
                 if remaining_seconds <= 0:
                     game_state = "game_over"
-                    draw_game_over_screen(screen, score)
+                    draw_game_over_screen(screen, score, sensor_snapshot)
                 else:
                     if udp_source is None:
                         physical_position = simulated_source.position_at(game_elapsed_s)
+                        tracking_status = TrackingStatus.PLAYABLE
                     else:
-                        physical_position = udp_source.poll_position()
-                    if not is_inside_play_area(physical_position):
+                        tracking = udp_source.poll()
+                        tracking_status = tracking.status
+                        physical_position = tracking.world_position
+                    if tracking_status in (TrackingStatus.WAITING, TrackingStatus.TRACKING_LOST):
+                        game_state = "tracking_lost"
+                        pause_started_ticks = now_ticks
+                        draw_frame(
+                            screen,
+                            last_cursor_position,
+                            current_gameplay_ui(remaining_seconds),
+                            last_active_hole_index,
+                            False,
+                            paused=True,
+                            safety_alert=True,
+                        )
+                        clock.tick(FRAME_RATE)
+                        continue
+                    if physical_position is None or not is_inside_tracked_footprint(physical_position):
                         lives = max(0, lives - 1)
                         game_state = "safety_paused"
                         pause_started_ticks = now_ticks
@@ -434,7 +553,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         draw_frame(
                             screen,
                             last_cursor_position,
-                            GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                            current_gameplay_ui(remaining_seconds),
                             last_active_hole_index,
                             last_mole_highlighted,
                             paused=True,
@@ -442,7 +561,10 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         )
                         clock.tick(FRAME_RATE)
                         continue
-                    if is_inside_screen_warning_zone(physical_position):
+                    if (
+                        tracking_status == TrackingStatus.DEAD_ZONE
+                        or is_inside_screen_warning_zone(physical_position)
+                    ):
                         game_state = "screen_warning"
                         pause_started_ticks = now_ticks
                         set_audible_warning_active(True)
@@ -450,7 +572,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         draw_frame(
                             screen,
                             last_cursor_position,
-                            GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds),
+                            current_gameplay_ui(remaining_seconds),
                             last_active_hole_index,
                             last_mole_highlighted,
                             paused=True,
@@ -458,10 +580,25 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         )
                         clock.tick(FRAME_RATE)
                         continue
+                    if not is_inside_play_area(physical_position):
+                        lives = max(0, lives - 1)
+                        game_state = "safety_paused"
+                        pause_started_ticks = now_ticks
+                        draw_frame(
+                            screen,
+                            last_cursor_position,
+                            current_gameplay_ui(remaining_seconds),
+                            last_active_hole_index,
+                            False,
+                            paused=True,
+                            safety_alert=True,
+                        )
+                        clock.tick(FRAME_RATE)
+                        continue
                     mapper = create_mapper(screen.get_size())
                     cursor_position = mapped_cursor_position(physical_position, mapper)
                     last_cursor_position = cursor_position
-                    ui = GameplayUi(score=score, lives=lives, remaining_seconds=remaining_seconds)
+                    ui = current_gameplay_ui(remaining_seconds)
                     active_hole_index = active_hole_index_at(game_elapsed_s)
                     last_active_hole_index = active_hole_index
                     mole_position = active_mole_position(*screen.get_size(), active_hole_index=active_hole_index)
@@ -478,14 +615,59 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
             set_audible_warning_active(False)
         if udp_source is not None:
             udp_source.close()
+        _close_sensor_overlay(sensor_overlay)
         pygame.quit()
     return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    args = argv if argv is not None else sys.argv[1:]
-    input_source = "udp" if "--input" in args and "udp" in args else "simulated"
-    return run(smoke_test="--smoke-test" in args, input_source=input_source)
+    parser = argparse.ArgumentParser(description="Run the Whack-a-Mole game.")
+    parser.add_argument(
+        "--input",
+        choices=("simulated", "udp"),
+        default="simulated",
+        help="Use built-in movement or V2 paired-range UDP cursor input.",
+    )
+    parser.add_argument(
+        "--serial-overlay",
+        action="store_true",
+        help="Show two independent USB ranges as diagnostics only.",
+    )
+    parser.add_argument("--left-port", help="Left ESP32 serial device, for example /dev/ttyUSB0.")
+    parser.add_argument("--right-port", help="Right ESP32 serial device, for example /dev/ttyUSB1.")
+    parser.add_argument("--baud", type=int, default=DEFAULT_BAUD_RATE)
+    parser.add_argument("--stale-after", type=float, default=DEFAULT_STALE_AFTER_S)
+    parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+
+    overlay = None
+    if args.serial_overlay:
+        if not args.left_port or not args.right_port:
+            parser.error("--left-port and --right-port are required with --serial-overlay")
+        if args.left_port == args.right_port:
+            parser.error("--left-port and --right-port must be different devices")
+        if args.baud <= 0:
+            parser.error("--baud must be positive")
+        if not isfinite(args.stale_after) or args.stale_after <= 0:
+            parser.error("--stale-after must be positive")
+        try:
+            overlay = SerialSensorOverlay(
+                args.left_port,
+                args.right_port,
+                baud_rate=args.baud,
+                stale_after_s=args.stale_after,
+            )
+        except Exception as exc:
+            print(f"Unable to open serial overlay: {exc}", file=sys.stderr)
+            return 2
+    elif args.left_port or args.right_port:
+        parser.error("--left-port/--right-port require --serial-overlay")
+
+    return run(
+        smoke_test=args.smoke_test,
+        input_source=args.input,
+        sensor_overlay=overlay,
+    )
 
 
 if __name__ == "__main__":

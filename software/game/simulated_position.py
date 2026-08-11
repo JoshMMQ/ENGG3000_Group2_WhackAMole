@@ -12,8 +12,9 @@ PhysicalPosition = Tuple[float, float]
 class SimulatedPositionSource:
     """Generate repeatable in-bounds movement across the play area."""
 
-    play_area_width_m: float = 3.0
-    play_area_height_m: float = 3.0
+    play_area_width_m: float = 1.50
+    play_area_top_m: float = 0.60
+    play_area_height_m: float = 1.40
     x_period_s: float = 4.0
     y_period_s: float = 6.0
 
@@ -33,7 +34,10 @@ class SimulatedPositionSource:
         elapsed = max(0.0, float(elapsed_s))
         x_ratio = self._wave(elapsed, self.x_period_s)
         y_ratio = self._wave(elapsed, self.y_period_s)
-        return x_ratio * self.play_area_width_m, y_ratio * self.play_area_height_m
+        return (
+            x_ratio * self.play_area_width_m,
+            self.play_area_top_m + y_ratio * self.play_area_height_m,
+        )
 
     @staticmethod
     def _wave(elapsed_s: float, period_s: float) -> float:

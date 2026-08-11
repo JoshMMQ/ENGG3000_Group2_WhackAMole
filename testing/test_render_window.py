@@ -6,6 +6,7 @@ from software.game.main import (
     gameplay_elapsed_seconds,
     is_inside_play_area,
     is_inside_screen_warning_zone,
+    is_inside_tracked_footprint,
     is_cursor_over_mole,
     mapped_cursor_position,
     randomized_hole_index,
@@ -20,18 +21,18 @@ class RenderWindowTests(unittest.TestCase):
         self.assertEqual(static_cursor_position(), (450, 450))
 
     def test_mapped_cursor_position_uses_physical_coordinates(self) -> None:
-        self.assertEqual(mapped_cursor_position((3.0, 0.0)), (899, 0))
+        self.assertEqual(mapped_cursor_position((1.50, 0.60)), (899, 0))
 
     def test_inside_play_area_accepts_boundary_positions(self) -> None:
-        self.assertTrue(is_inside_play_area((0.0, 0.0)))
-        self.assertTrue(is_inside_play_area((3.0, 3.0)))
-        self.assertTrue(is_inside_play_area((1.5, 1.5)))
+        self.assertTrue(is_inside_play_area((0.0, 0.60)))
+        self.assertTrue(is_inside_play_area((1.50, 2.00)))
+        self.assertTrue(is_inside_play_area((0.75, 1.30)))
 
     def test_inside_play_area_rejects_outside_positions(self) -> None:
-        self.assertFalse(is_inside_play_area((-0.01, 1.5)))
-        self.assertFalse(is_inside_play_area((3.01, 1.5)))
-        self.assertFalse(is_inside_play_area((1.5, -0.01)))
-        self.assertFalse(is_inside_play_area((1.5, 3.01)))
+        self.assertFalse(is_inside_play_area((-0.01, 1.30)))
+        self.assertFalse(is_inside_play_area((1.51, 1.30)))
+        self.assertFalse(is_inside_play_area((0.75, 0.59)))
+        self.assertFalse(is_inside_play_area((0.75, 2.01)))
 
     def test_inside_play_area_rejects_invalid_positions(self) -> None:
         self.assertFalse(is_inside_play_area(("bad", 1.5)))
@@ -41,14 +42,19 @@ class RenderWindowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             is_inside_play_area((1.5, 1.5), width_m=0.0)
 
-    def test_screen_warning_starts_at_fifty_centimetres_from_screen(self) -> None:
-        self.assertTrue(is_inside_screen_warning_zone((1.5, 0.50)))
-        self.assertTrue(is_inside_screen_warning_zone((1.5, 0.49)))
-        self.assertFalse(is_inside_screen_warning_zone((1.5, 0.51)))
+    def test_screen_warning_is_the_v2_dead_zone_below_sixty_centimetres(self) -> None:
+        self.assertTrue(is_inside_screen_warning_zone((0.75, 0.59)))
+        self.assertFalse(is_inside_screen_warning_zone((0.75, 0.60)))
 
     def test_screen_warning_uses_hysteresis_to_clear(self) -> None:
-        self.assertFalse(should_clear_screen_warning((1.5, 0.60)))
-        self.assertTrue(should_clear_screen_warning((1.5, 0.61)))
+        self.assertFalse(should_clear_screen_warning((0.75, 0.69)))
+        self.assertTrue(should_clear_screen_warning((0.75, 0.70)))
+
+    def test_tracked_footprint_includes_dead_zone_but_not_outside_field(self) -> None:
+        self.assertTrue(is_inside_tracked_footprint((0.75, 0.30)))
+        self.assertTrue(is_inside_tracked_footprint((1.50, 2.00)))
+        self.assertFalse(is_inside_tracked_footprint((1.51, 1.00)))
+        self.assertFalse(is_inside_tracked_footprint((0.75, -0.01)))
 
     def test_screen_warning_rejects_invalid_positions(self) -> None:
         self.assertFalse(is_inside_screen_warning_zone((1.5, "bad")))
@@ -64,7 +70,7 @@ class RenderWindowTests(unittest.TestCase):
     def test_create_mapper_uses_active_window_size(self) -> None:
         mapper = create_mapper((1920, 1080))
 
-        self.assertEqual(mapper.physical_to_screen(3.0, 3.0), (1919, 1079))
+        self.assertEqual(mapper.physical_to_screen(1.50, 2.00), (1919, 1079))
 
     def test_active_hole_index_changes_randomly_on_interval(self) -> None:
         self.assertEqual(active_hole_index_at(0.0, interval_s=1.75), 3)
