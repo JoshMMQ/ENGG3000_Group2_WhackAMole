@@ -27,6 +27,13 @@ class DistanceAxisMapperTests(unittest.TestCase):
         self.assertEqual(mapper.position_for_distance(1500), (1.5, 1.5))
         self.assertEqual(mapper.position_for_distance(2500), (3.0, 1.5))
 
+    def test_maps_distance_range_to_y_axis(self) -> None:
+        mapper = DistanceAxisMapper()
+
+        self.assertEqual(mapper.position_for_distance(500, axis="y"), (1.5, 0.0))
+        self.assertEqual(mapper.position_for_distance(1500, axis="y"), (1.5, 1.5))
+        self.assertEqual(mapper.position_for_distance(2500, axis="y"), (1.5, 3.0))
+
     def test_clamps_distance_to_axis_bounds(self) -> None:
         mapper = DistanceAxisMapper()
 
@@ -36,6 +43,12 @@ class DistanceAxisMapperTests(unittest.TestCase):
     def test_rejects_invalid_range(self) -> None:
         with self.assertRaises(ValueError):
             DistanceAxisMapper(min_distance_mm=2500, max_distance_mm=500)
+
+    def test_rejects_invalid_axis_name(self) -> None:
+        mapper = DistanceAxisMapper()
+
+        with self.assertRaises(ValueError):
+            mapper.position_for_distance(1500, axis="z")
 
 
 class UdpPositionSourceTests(unittest.TestCase):
@@ -52,6 +65,17 @@ class UdpPositionSourceTests(unittest.TestCase):
 
         self.assertEqual(source.poll_position(), (3.0, 1.5))
         self.assertEqual(source.latest_position, (3.0, 1.5))
+
+    def test_xy_sensor_packet_updates_cursor_position(self) -> None:
+        payload = valid_payload()
+        payload["readings"] = [
+            {"sensor_id": "x", "distance_mm": 2500, "valid": True},
+            {"sensor_id": "y", "distance_mm": 1000, "valid": True},
+        ]
+        source = UdpPositionSource(sock=FakeSocket([json.dumps(payload).encode("utf-8")]))
+
+        self.assertEqual(source.poll_position(), (3.0, 0.75))
+        self.assertEqual(source.latest_position, (3.0, 0.75))
 
     def test_invalid_packet_keeps_last_position(self) -> None:
         source = UdpPositionSource(sock=FakeSocket([b"{bad json"]))
