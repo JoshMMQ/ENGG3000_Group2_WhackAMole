@@ -208,6 +208,21 @@ Terminal 2:
 .venv/bin/python -m software.transport.mock_sensor_scan_sender
 ```
 
+For controlled physical evidence, close the console receiver and capture a
+stationary flat target with:
+
+```bash
+.venv/bin/python -m software.transport.sensor_scan_capture \
+  --sensor s2 --known-distance-mm 500 --count 100 \
+  --run-label s2-flat-board-500mm \
+  --output evidence/S2-500mm-raw.csv
+```
+
+The tool refuses to overwrite an existing capture and prints validity, median,
+the selected sensor's ground-truth error, range, cycle gaps, and duplicates.
+Repeat at 500 mm and 1000 mm for S1, S2, and S3 before setting calibration
+offsets.
+
 ## Hardware facts and constraints
 
 The formal brief supplies 2 ESP32 boards, 2 antennas, 4 RCWL-1601 sensors,
