@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from math import isfinite
 import sys
 from typing import Optional
@@ -16,6 +17,7 @@ except ImportError:
 
 try:
     from .coordinates import CoordinateMapper, ScreenPosition
+    from .logging_config import DEFAULT_LOG_PATH, configure_logging
     from .scene import (
         GameplayUi,
         active_mole_position,
@@ -29,9 +31,10 @@ try:
     )
     from .sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
-    from .udp_position import TrackingStatus, UdpPositionSource
+    from .udp_position import TrackingSnapshot, TrackingStatus, UdpPositionSource
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
+    from logging_config import DEFAULT_LOG_PATH, configure_logging
     from scene import (
         GameplayUi,
         active_mole_position,
@@ -45,7 +48,7 @@ except ImportError:
     )
     from sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
     from simulated_position import PhysicalPosition, SimulatedPositionSource
-    from udp_position import TrackingStatus, UdpPositionSource
+    from udp_position import TrackingSnapshot, TrackingStatus, UdpPositionSource
 
 
 WINDOW_WIDTH_PX = 900
@@ -63,6 +66,8 @@ TRACKED_DEPTH_M = 2.00
 STARTING_LIVES = 3
 SCREEN_WARNING_DISTANCE_M = 0.60
 SCREEN_WARNING_CLEAR_DISTANCE_M = 0.70
+
+logger = logging.getLogger(__name__)
 
 
 def randomized_hole_index(slot: int, hole_count: int = 9) -> int:
@@ -85,6 +90,16 @@ def mapped_cursor_position(
     if position is None:
         raise ValueError("cursor position must be valid")
     return position
+
+
+def tracking_only_position(snapshot: TrackingSnapshot) -> PhysicalPosition:
+    """Use every valid triangulated position and otherwise retain the cursor."""
+
+    return (
+        snapshot.world_position
+        if snapshot.world_position is not None
+        else snapshot.cursor_position
+    )
 
 
 def is_inside_play_area(
@@ -166,10 +181,23 @@ def set_audible_warning_active(active: bool) -> None:
     _ = active
 
 
-def create_mapper(screen_size: ScreenPosition = (WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX)) -> CoordinateMapper:
-    """Create a coordinate mapper for the active window size."""
+def create_mapper(
+    screen_size: ScreenPosition = (WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX),
+    tracking_only: bool = False,
+) -> CoordinateMapper:
+    """Create a playable-area or full-footprint mapper for the active window."""
 
-    return CoordinateMapper(screen_width_px=screen_size[0], screen_height_px=screen_size[1])
+    if tracking_only:
+        return CoordinateMapper(
+            play_area_top_m=0.0,
+            play_area_height_m=TRACKED_DEPTH_M,
+            screen_width_px=screen_size[0],
+            screen_height_px=screen_size[1],
+        )
+    return CoordinateMapper(
+        screen_width_px=screen_size[0],
+        screen_height_px=screen_size[1],
+    )
 
 
 def static_cursor_position(mapper: Optional[CoordinateMapper] = None) -> ScreenPosition:
@@ -248,6 +276,7 @@ def _close_sensor_overlay(sensor_overlay: Optional[SerialSensorOverlay]) -> None
     try:
         sensor_overlay.close()
     except Exception as exc:
+        logger.exception("Unable to close serial overlay cleanly")
         print(f"Unable to close serial overlay cleanly: {exc}", file=sys.stderr)
 
 
@@ -255,8 +284,21 @@ def run(
     smoke_test: bool = False,
     input_source: str = "simulated",
     sensor_overlay: Optional[SerialSensorOverlay] = None,
+    safety_enabled: bool = False,
 ) -> int:
-    """Open the game with simulated or V2 paired-range cursor input."""
+    """Open the game; safety gates are opt-in during tracking development."""
+
+    logger.info(
+        "Game run starting input_source=%s smoke_test=%s safety_enabled=%s",
+        input_source,
+        smoke_test,
+        safety_enabled,
+    )
+    if not safety_enabled:
+        logger.warning(
+            "Safety gates disabled for tracking-only development: no boundary/dead-zone/"
+            "tracking-loss pause or life penalty"
+        )
 
     if pygame is None:
         _close_sensor_overlay(sensor_overlay)
@@ -271,7 +313,7 @@ def run(
     screen = pygame.display.set_mode((WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX), pygame.RESIZABLE)
     pygame.display.set_caption("Whack-a-Mole Prototype")
     clock = pygame.time.Clock()
-    mapper = create_mapper(screen.get_size())
+    mapper = create_mapper(screen.get_size(), tracking_only=not safety_enabled)
     simulated_source = SimulatedPositionSource()
     udp_source = UdpPositionSource() if input_source == "udp" else None
     start_ticks = pygame.time.get_ticks()
@@ -530,8 +572,15 @@ def run(
                     else:
                         tracking = udp_source.poll()
                         tracking_status = tracking.status
-                        physical_position = tracking.world_position
-                    if tracking_status in (TrackingStatus.WAITING, TrackingStatus.TRACKING_LOST):
+                        physical_position = (
+                            tracking.world_position
+                            if safety_enabled
+                            else tracking_only_position(tracking)
+                        )
+                    if safety_enabled and tracking_status in (
+                        TrackingStatus.WAITING,
+                        TrackingStatus.TRACKING_LOST,
+                    ):
                         game_state = "tracking_lost"
                         pause_started_ticks = now_ticks
                         draw_frame(
@@ -545,7 +594,10 @@ def run(
                         )
                         clock.tick(FRAME_RATE)
                         continue
-                    if physical_position is None or not is_inside_tracked_footprint(physical_position):
+                    if safety_enabled and (
+                        physical_position is None
+                        or not is_inside_tracked_footprint(physical_position)
+                    ):
                         lives = max(0, lives - 1)
                         game_state = "safety_paused"
                         pause_started_ticks = now_ticks
@@ -561,7 +613,7 @@ def run(
                         )
                         clock.tick(FRAME_RATE)
                         continue
-                    if (
+                    if safety_enabled and (
                         tracking_status == TrackingStatus.DEAD_ZONE
                         or is_inside_screen_warning_zone(physical_position)
                     ):
@@ -580,7 +632,7 @@ def run(
                         )
                         clock.tick(FRAME_RATE)
                         continue
-                    if not is_inside_play_area(physical_position):
+                    if safety_enabled and not is_inside_play_area(physical_position):
                         lives = max(0, lives - 1)
                         game_state = "safety_paused"
                         pause_started_ticks = now_ticks
@@ -595,8 +647,21 @@ def run(
                         )
                         clock.tick(FRAME_RATE)
                         continue
-                    mapper = create_mapper(screen.get_size())
+                    mapper = create_mapper(
+                        screen.get_size(),
+                        tracking_only=not safety_enabled,
+                    )
                     cursor_position = mapped_cursor_position(physical_position, mapper)
+                    if cursor_position != last_cursor_position:
+                        logger.debug(
+                            "Cursor moved world_x_m=%.4f world_y_m=%.4f "
+                            "screen_x_px=%s screen_y_px=%s tracking_status=%s",
+                            physical_position[0],
+                            physical_position[1],
+                            cursor_position[0],
+                            cursor_position[1],
+                            tracking_status.value,
+                        )
                     last_cursor_position = cursor_position
                     ui = current_gameplay_ui(remaining_seconds)
                     active_hole_index = active_hole_index_at(game_elapsed_s)
@@ -617,6 +682,7 @@ def run(
             udp_source.close()
         _close_sensor_overlay(sensor_overlay)
         pygame.quit()
+        logger.info("Game run stopped")
     return 0
 
 
@@ -637,8 +703,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--right-port", help="Right ESP32 serial device, for example /dev/ttyUSB1.")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD_RATE)
     parser.add_argument("--stale-after", type=float, default=DEFAULT_STALE_AFTER_S)
+    parser.add_argument(
+        "--enable-safety",
+        action="store_true",
+        help="Re-enable dead-zone, boundary, tracking-loss, and life-penalty gates.",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=str(DEFAULT_LOG_PATH),
+        help="Rotating crash/tracking log path (default: runtime-logs/game.log).",
+    )
     parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+
+    log_path = configure_logging(args.log_file)
+    logger.info("Parsed command line args=%s", vars(args))
 
     overlay = None
     if args.serial_overlay:
@@ -658,16 +737,23 @@ def main(argv: Optional[list[str]] = None) -> int:
                 stale_after_s=args.stale_after,
             )
         except Exception as exc:
+            logger.exception("Unable to open serial overlay")
             print(f"Unable to open serial overlay: {exc}", file=sys.stderr)
             return 2
     elif args.left_port or args.right_port:
         parser.error("--left-port/--right-port require --serial-overlay")
 
-    return run(
-        smoke_test=args.smoke_test,
-        input_source=args.input,
-        sensor_overlay=overlay,
-    )
+    try:
+        return run(
+            smoke_test=args.smoke_test,
+            input_source=args.input,
+            sensor_overlay=overlay,
+            safety_enabled=args.enable_safety,
+        )
+    except Exception:
+        logger.exception("Unhandled game crash")
+        print(f"Game crashed; diagnostic traceback written to {log_path}", file=sys.stderr)
+        raise
 
 
 if __name__ == "__main__":

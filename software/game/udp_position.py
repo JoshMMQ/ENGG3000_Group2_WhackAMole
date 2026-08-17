@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import time
 from dataclasses import dataclass
 from enum import Enum
-from math import isfinite, sqrt
+from math import hypot, isfinite, sqrt
 from typing import Any, Callable, Optional, Protocol
 
 from .simulated_position import PhysicalPosition
@@ -23,9 +24,22 @@ TRACKED_DEPTH_M = 2.00
 PLAYABLE_MIN_Y_M = 0.60
 DEFAULT_MAX_PAIR_SKEW_MS = 40.0
 DEFAULT_STALE_AFTER_S = 0.50
-DEFAULT_FILTER_ALPHA = 0.65
+# tracker.py weights one new position against two parts of the previous
+# position. Keep that behaviour at the laptop-owned, post-triangulation
+# boundary rather than filtering either range independently in firmware.
+DEFAULT_FILTER_ALPHA = 1.0 / 3.0
+DEFAULT_MIN_MOVEMENT_M = 0.005
+DEFAULT_STABLE_SAMPLE_COUNT = 3
 MIN_RANGE_MM = 20.0
+# The firmware deliberately accepts echoes beyond the approximately 2.42 m
+# maximum planar range needed by the tracked footprint. Geometry, not this
+# tolerance ceiling, decides whether a paired position belongs to the game.
 MAX_RANGE_MM = 3000.0
+# Allow only floating-point round-off at an exact footprint boundary. This is
+# not a physical margin: a position even 0.1 mm beyond the footprint is rejected.
+FOOTPRINT_NUMERICAL_EPSILON_M = 1e-9
+
+logger = logging.getLogger(__name__)
 
 
 class DatagramSocket(Protocol):
@@ -117,10 +131,8 @@ def parse_range_pair_packet(raw_packet: object) -> Optional[RangePairPacket]:
 def triangulate_ranges(
     left_mm: float,
     right_mm: float,
-    *,
-    footprint_tolerance_m: float = 0.02,
 ) -> Optional[PhysicalPosition]:
-    """Convert a valid paired range into the positive-root world position."""
+    """Triangulate a pair and reject positions outside the tracked footprint."""
 
     left = _number(left_mm)
     right = _number(right_mm)
@@ -130,9 +142,6 @@ def triangulate_ranges(
         return None
     if not MIN_RANGE_MM <= right <= MAX_RANGE_MM:
         return None
-    if footprint_tolerance_m < 0:
-        raise ValueError("footprint_tolerance_m must be non-negative")
-
     left_m = left / 1000.0
     right_m = right / 1000.0
     baseline_m = RIGHT_SENSOR_POSITION_M[0] - LEFT_SENSOR_POSITION_M[0]
@@ -145,9 +154,17 @@ def triangulate_ranges(
 
     x_m = LEFT_SENSOR_POSITION_M[0] + q_m
     y_m = LEFT_SENSOR_POSITION_M[1] + sqrt(max(0.0, radicand))
-    if not -footprint_tolerance_m <= x_m <= TRACKED_WIDTH_M + footprint_tolerance_m:
+    if not (
+        -FOOTPRINT_NUMERICAL_EPSILON_M
+        <= x_m
+        <= TRACKED_WIDTH_M + FOOTPRINT_NUMERICAL_EPSILON_M
+    ):
         return None
-    if not -footprint_tolerance_m <= y_m <= TRACKED_DEPTH_M + footprint_tolerance_m:
+    if not (
+        -FOOTPRINT_NUMERICAL_EPSILON_M
+        <= y_m
+        <= TRACKED_DEPTH_M + FOOTPRINT_NUMERICAL_EPSILON_M
+    ):
         return None
 
     return (
@@ -167,6 +184,8 @@ class UdpPositionSource:
         max_pair_skew_ms: float = DEFAULT_MAX_PAIR_SKEW_MS,
         stale_after_s: float = DEFAULT_STALE_AFTER_S,
         filter_alpha: float = DEFAULT_FILTER_ALPHA,
+        min_movement_m: float = DEFAULT_MIN_MOVEMENT_M,
+        stable_sample_count: int = DEFAULT_STABLE_SAMPLE_COUNT,
         sock: Optional[DatagramSocket] = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -176,10 +195,21 @@ class UdpPositionSource:
             raise ValueError("stale_after_s must be positive")
         if not isfinite(filter_alpha) or not 0 < filter_alpha <= 1:
             raise ValueError("filter_alpha must be in (0, 1]")
+        if not isfinite(min_movement_m) or min_movement_m < 0:
+            raise ValueError("min_movement_m must be non-negative")
+        if (
+            isinstance(stable_sample_count, bool)
+            or not isinstance(stable_sample_count, int)
+            or stable_sample_count < 1
+        ):
+            raise ValueError("stable_sample_count must be a positive integer")
 
         self._max_pair_skew_ms = max_pair_skew_ms
         self._stale_after_s = stale_after_s
         self._filter_alpha = filter_alpha
+        self._min_movement_m = min_movement_m
+        self._stable_sample_count = stable_sample_count
+        self._stable_samples = 0
         self._clock = clock
         self._last_packet_at_s: Optional[float] = None
         self._last_cycle_id: Optional[int] = None
@@ -221,13 +251,20 @@ class UdpPositionSource:
             except (BlockingIOError, TimeoutError):
                 break
             except OSError:
-                self._mark_tracking_lost()
+                logger.exception("UDP receive failed")
+                self._mark_tracking_lost("udp_receive_error")
                 return self._snapshot
 
             packet = parse_range_pair_packet(raw_packet)
             if packet is None:
+                logger.warning("Dropped malformed or unsupported UDP packet raw=%r", raw_packet[:240])
                 continue
             if self._last_cycle_id is not None and packet.cycle_id <= self._last_cycle_id:
+                logger.debug(
+                    "Ignored old/duplicate pair cycle_id=%s latest_cycle_id=%s",
+                    packet.cycle_id,
+                    self._last_cycle_id,
+                )
                 continue
 
             self._last_cycle_id = packet.cycle_id
@@ -238,7 +275,7 @@ class UdpPositionSource:
             self._last_packet_at_s is not None
             and now - self._last_packet_at_s > self._stale_after_s
         ):
-            self._mark_tracking_lost()
+            self._mark_tracking_lost("stale_stream")
         return self._snapshot
 
     def poll_position(self) -> PhysicalPosition:
@@ -256,14 +293,38 @@ class UdpPositionSource:
             or not packet.right_valid
             or packet.left_mm is None
             or packet.right_mm is None
-            or packet.pair_skew_ms > self._max_pair_skew_ms
         ):
-            self._mark_tracking_lost()
+            logger.warning(
+                "Rejected invalid pair cycle_id=%s left_mm=%s right_mm=%s "
+                "left_valid=%s right_valid=%s",
+                packet.cycle_id,
+                packet.left_mm,
+                packet.right_mm,
+                packet.left_valid,
+                packet.right_valid,
+            )
+            self._mark_tracking_lost("invalid_range")
+            return
+        if packet.pair_skew_ms > self._max_pair_skew_ms:
+            logger.warning(
+                "Rejected high-skew pair cycle_id=%s pair_skew_ms=%.3f maximum_ms=%.3f",
+                packet.cycle_id,
+                packet.pair_skew_ms,
+                self._max_pair_skew_ms,
+            )
+            self._mark_tracking_lost("pair_skew")
             return
 
         position = triangulate_ranges(packet.left_mm, packet.right_mm)
         if position is None:
-            self._mark_tracking_lost()
+            logger.warning(
+                "Rejected impossible/out-of-footprint geometry cycle_id=%s "
+                "left_mm=%.3f right_mm=%.3f",
+                packet.cycle_id,
+                packet.left_mm,
+                packet.right_mm,
+            )
+            self._mark_tracking_lost("invalid_geometry")
             return
 
         filtered = self._filter(position)
@@ -273,31 +334,82 @@ class UdpPositionSource:
             status = TrackingStatus.PLAYABLE
             self._last_playable_position = filtered
 
-        self._snapshot = TrackingSnapshot(
+        self._set_snapshot(TrackingSnapshot(
             status=status,
             world_position=filtered,
             cursor_position=self._last_playable_position,
             cycle_id=packet.cycle_id,
+        ))
+        logger.debug(
+            "Accepted pair cycle_id=%s left_mm=%.3f right_mm=%.3f skew_ms=%.3f "
+            "raw_x_m=%.4f raw_y_m=%.4f filtered_x_m=%.4f filtered_y_m=%.4f status=%s",
+            packet.cycle_id,
+            packet.left_mm,
+            packet.right_mm,
+            packet.pair_skew_ms,
+            position[0],
+            position[1],
+            filtered[0],
+            filtered[1],
+            status.value,
         )
 
     def _filter(self, position: PhysicalPosition) -> PhysicalPosition:
         if self._filtered_position is None:
             self._filtered_position = position
+            return self._filtered_position
+
+        movement_m = hypot(
+            position[0] - self._filtered_position[0],
+            position[1] - self._filtered_position[1],
+        )
+        if movement_m < self._min_movement_m:
+            self._stable_samples += 1
+            if self._stable_samples < self._stable_sample_count:
+                return self._filtered_position
         else:
-            alpha = self._filter_alpha
-            self._filtered_position = (
-                alpha * position[0] + (1.0 - alpha) * self._filtered_position[0],
-                alpha * position[1] + (1.0 - alpha) * self._filtered_position[1],
-            )
+            self._stable_samples = 0
+
+        # Once a small change has remained stable for the configured number of
+        # samples, accept it and begin a fresh stability window. Larger moves
+        # are accepted immediately, matching tracker.py's responsiveness.
+        self._stable_samples = 0
+        alpha = self._filter_alpha
+        self._filtered_position = (
+            alpha * position[0] + (1.0 - alpha) * self._filtered_position[0],
+            alpha * position[1] + (1.0 - alpha) * self._filtered_position[1],
+        )
         return self._filtered_position
 
-    def _mark_tracking_lost(self) -> None:
-        self._snapshot = TrackingSnapshot(
+    def _mark_tracking_lost(self, reason: str) -> None:
+        # tracker.py starts a new stability window when an object disappears;
+        # an invalid or stale V2 pair is the equivalent event in this pipeline.
+        self._stable_samples = 0
+        if self._snapshot.status != TrackingStatus.TRACKING_LOST:
+            logger.warning(
+                "Tracking lost reason=%s cycle_id=%s cursor_x_m=%.4f cursor_y_m=%.4f",
+                reason,
+                self._last_cycle_id,
+                self._last_playable_position[0],
+                self._last_playable_position[1],
+            )
+        self._set_snapshot(TrackingSnapshot(
             status=TrackingStatus.TRACKING_LOST,
             world_position=None,
             cursor_position=self._last_playable_position,
             cycle_id=self._last_cycle_id,
-        )
+        ))
+
+    def _set_snapshot(self, snapshot: TrackingSnapshot) -> None:
+        previous_status = self._snapshot.status
+        self._snapshot = snapshot
+        if snapshot.status != previous_status:
+            logger.info(
+                "Tracking state changed from=%s to=%s cycle_id=%s",
+                previous_status.value,
+                snapshot.status.value,
+                snapshot.cycle_id,
+            )
 
 
 def _decode_json(raw_packet: object) -> Any:

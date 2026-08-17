@@ -103,7 +103,15 @@ class GameSerialOverlayCliTests(unittest.TestCase):
             smoke_test=False,
             input_source="simulated",
             sensor_overlay=overlay,
+            safety_enabled=False,
         )
+
+    @patch("software.game.main.run", return_value=0)
+    def test_cli_can_explicitly_restore_safety_gates(self, run_game):
+        result = main(["--enable-safety"])
+
+        self.assertEqual(result, 0)
+        self.assertTrue(run_game.call_args.kwargs["safety_enabled"])
 
     def test_cli_requires_two_distinct_ports(self):
         invalid_arguments = (
@@ -179,7 +187,7 @@ class GameSerialOverlayRuntimeTests(unittest.TestCase):
         draw_game_over.assert_called_once_with(fake_pygame.display.screen, 0, snapshot)
         self.assertEqual(draw_frame.call_count, 4)
         for call in draw_frame.call_args_list:
-            self.assertEqual(call.args[1], (450, 450))
+            self.assertEqual(call.args[1], (450, 584))
             self.assertIs(call.args[2].sensor_overlay, snapshot)
 
 

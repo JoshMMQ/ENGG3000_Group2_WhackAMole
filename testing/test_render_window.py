@@ -1,5 +1,7 @@
 import unittest
 
+from software.game.udp_position import TrackingSnapshot, TrackingStatus
+
 from software.game.main import (
     active_hole_index_at,
     create_mapper,
@@ -13,10 +15,31 @@ from software.game.main import (
     scaled_hit_radius,
     should_clear_screen_warning,
     static_cursor_position,
+    tracking_only_position,
 )
 
 
 class RenderWindowTests(unittest.TestCase):
+    def test_tracking_only_mode_uses_dead_zone_world_position(self) -> None:
+        snapshot = TrackingSnapshot(
+            status=TrackingStatus.DEAD_ZONE,
+            world_position=(0.40, 0.30),
+            cursor_position=(0.80, 1.20),
+            cycle_id=4,
+        )
+
+        self.assertEqual(tracking_only_position(snapshot), (0.40, 0.30))
+
+    def test_tracking_only_mode_retains_cursor_when_tracking_is_lost(self) -> None:
+        snapshot = TrackingSnapshot(
+            status=TrackingStatus.TRACKING_LOST,
+            world_position=None,
+            cursor_position=(0.80, 1.20),
+            cycle_id=5,
+        )
+
+        self.assertEqual(tracking_only_position(snapshot), (0.80, 1.20))
+
     def test_static_cursor_uses_mapped_play_area_centre(self) -> None:
         self.assertEqual(static_cursor_position(), (450, 450))
 
@@ -71,6 +94,13 @@ class RenderWindowTests(unittest.TestCase):
         mapper = create_mapper((1920, 1080))
 
         self.assertEqual(mapper.physical_to_screen(1.50, 2.00), (1919, 1079))
+
+    def test_tracking_only_mapper_exposes_the_full_dead_zone_depth(self) -> None:
+        mapper = create_mapper((900, 900), tracking_only=True)
+
+        self.assertEqual(mapper.physical_to_screen(0.75, 0.00), (450, 0))
+        self.assertEqual(mapper.physical_to_screen(0.75, 0.30), (450, 135))
+        self.assertEqual(mapper.physical_to_screen(0.75, 2.00), (450, 899))
 
     def test_active_hole_index_changes_randomly_on_interval(self) -> None:
         self.assertEqual(active_hole_index_at(0.0, interval_s=1.75), 3)

@@ -1,6 +1,16 @@
-# ESP32 gateway and sensor-node firmware
+# Legacy ESP32 Gateway And Independent Sensor-Node Firmware
 
-The current network design uses three ESP32-compatible boards and one laptop:
+This directory reproduces the superseded Version 1 network diagnostic. It is
+not the current V2 gameplay architecture and its independently timed packets
+must never be paired for triangulation, safety, or scoring.
+
+The active two-board V2 path is:
+
+- `firmware/range_pair_host/range_pair_host.ino` on the left/host ESP32;
+- `firmware/range_station_right/range_station_right.ino` on the right ESP32;
+- `docs/TWO_BOARD_V2_RANGE_PAIR.md` for the complete procedure.
+
+This legacy network design uses three ESP32-compatible boards and one laptop:
 
 ```text
 ESP32 #1  gateway access point (no ultrasonic sensor)

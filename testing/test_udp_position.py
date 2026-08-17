@@ -3,7 +3,10 @@ from math import hypot
 import unittest
 
 from software.game.udp_position import (
+    MAX_RANGE_MM,
     RangePairPacket,
+    TRACKED_DEPTH_M,
+    TRACKED_WIDTH_M,
     TrackingStatus,
     UdpPositionSource,
     parse_range_pair_packet,
@@ -23,6 +26,9 @@ class FakeSocket:
 
     def close(self) -> None:
         self.closed = True
+
+    def queue(self, packet: bytes) -> None:
+        self._packets.append(packet)
 
 
 def ranges_for(x_m: float, y_m: float) -> tuple[float, float]:
@@ -95,10 +101,28 @@ class TriangulationTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 self.assertPositionAlmostEqual(triangulate_ranges(*ranges_for(*expected)), expected)
 
+    def test_three_metre_limit_covers_the_farthest_required_positions(self) -> None:
+        for expected in (
+            (0.0, 0.60),
+            (TRACKED_WIDTH_M, 0.60),
+            (0.0, TRACKED_DEPTH_M),
+            (TRACKED_WIDTH_M, TRACKED_DEPTH_M),
+        ):
+            with self.subTest(expected=expected):
+                ranges = ranges_for(*expected)
+                self.assertLessEqual(max(ranges), MAX_RANGE_MM)
+                self.assertPositionAlmostEqual(triangulate_ranges(*ranges), expected)
+
     def test_rejects_impossible_and_out_of_footprint_geometry(self) -> None:
         self.assertIsNone(triangulate_ranges(500.0, 500.0))
         self.assertIsNone(triangulate_ranges(*ranges_for(2.0, 1.0)))
+        self.assertIsNone(triangulate_ranges(*ranges_for(-0.0001, 1.0)))
+        self.assertIsNone(
+            triangulate_ranges(*ranges_for(TRACKED_WIDTH_M + 0.0001, 1.0))
+        )
+        self.assertIsNone(triangulate_ranges(*ranges_for(0.75, 2.0001)))
         self.assertIsNone(triangulate_ranges(10.0, 10.0))
+        self.assertIsNone(triangulate_ranges(MAX_RANGE_MM + 0.1, 1500.0))
 
 
 class UdpPositionSourceTests(unittest.TestCase):
@@ -139,10 +163,16 @@ class UdpPositionSourceTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot.cursor_position[1], 1.00, places=6)
 
     def test_invalid_pair_and_excessive_skew_mark_tracking_lost(self) -> None:
+        outside_left_mm, outside_right_mm = ranges_for(
+            0.75,
+            TRACKED_DEPTH_M + 0.001,
+        )
         for mutation in (
             {"left_valid": False, "left_mm": None},
             {"pair_skew_ms": 40.1},
             {"left_mm": 500.0, "right_mm": 500.0},
+            {"left_mm": outside_left_mm, "right_mm": outside_right_mm},
+            {"left_mm": MAX_RANGE_MM + 0.1},
         ):
             with self.subTest(mutation=mutation):
                 payload = valid_payload()
@@ -187,6 +217,68 @@ class UdpPositionSourceTests(unittest.TestCase):
 
         self.assertAlmostEqual(snapshot.world_position[0], 0.75, places=6)
 
+    def test_filter_holds_small_tracker_jitter_until_three_stable_samples(self) -> None:
+        sock = FakeSocket([encoded(valid_payload(cycle_id=1, x_m=0.75, y_m=1.30))])
+        source = UdpPositionSource(
+            sock=sock,
+            filter_alpha=1.0,
+            min_movement_m=0.005,
+            stable_sample_count=3,
+        )
+        self.assertAlmostEqual(source.poll(now_s=1.0).world_position[0], 0.75)
+
+        for cycle_id, x_m in ((2, 0.753), (3, 0.754)):
+            sock.queue(encoded(valid_payload(cycle_id=cycle_id, x_m=x_m, y_m=1.30)))
+            snapshot = source.poll(now_s=1.0 + cycle_id / 100.0)
+            self.assertAlmostEqual(snapshot.world_position[0], 0.75)
+
+        sock.queue(encoded(valid_payload(cycle_id=4, x_m=0.752, y_m=1.30)))
+        stable = source.poll(now_s=1.04)
+
+        self.assertAlmostEqual(stable.world_position[0], 0.752, places=6)
+
+    def test_filter_accepts_large_tracker_movement_immediately(self) -> None:
+        packets = [
+            encoded(valid_payload(cycle_id=1, x_m=0.75, y_m=1.30)),
+            encoded(valid_payload(cycle_id=2, x_m=0.80, y_m=1.30)),
+        ]
+        source = UdpPositionSource(
+            sock=FakeSocket(packets),
+            filter_alpha=1.0,
+            min_movement_m=0.005,
+        )
+
+        snapshot = source.poll(now_s=1.0)
+
+        self.assertAlmostEqual(snapshot.world_position[0], 0.80, places=6)
+
+    def test_tracking_loss_restarts_the_stability_window(self) -> None:
+        sock = FakeSocket([encoded(valid_payload(cycle_id=1, x_m=0.75, y_m=1.30))])
+        source = UdpPositionSource(
+            sock=sock,
+            filter_alpha=1.0,
+            min_movement_m=0.005,
+            stable_sample_count=2,
+        )
+        source.poll(now_s=1.0)
+
+        sock.queue(encoded(valid_payload(cycle_id=2, x_m=0.753, y_m=1.30)))
+        self.assertAlmostEqual(source.poll(now_s=1.02).world_position[0], 0.75)
+
+        invalid = valid_payload(cycle_id=3)
+        invalid.update(left_valid=False, left_mm=None)
+        sock.queue(encoded(invalid))
+        self.assertEqual(
+            source.poll(now_s=1.03).status,
+            TrackingStatus.TRACKING_LOST,
+        )
+
+        sock.queue(encoded(valid_payload(cycle_id=4, x_m=0.753, y_m=1.30)))
+        recovered = source.poll(now_s=1.04)
+
+        self.assertEqual(recovered.status, TrackingStatus.PLAYABLE)
+        self.assertAlmostEqual(recovered.world_position[0], 0.75)
+
     def test_rejects_invalid_configuration(self) -> None:
         with self.assertRaises(ValueError):
             UdpPositionSource(sock=FakeSocket([]), filter_alpha=0.0)
@@ -194,6 +286,15 @@ class UdpPositionSourceTests(unittest.TestCase):
             UdpPositionSource(sock=FakeSocket([]), stale_after_s=0.0)
         with self.assertRaises(ValueError):
             UdpPositionSource(sock=FakeSocket([]), max_pair_skew_ms=-1.0)
+        with self.assertRaises(ValueError):
+            UdpPositionSource(sock=FakeSocket([]), min_movement_m=-0.001)
+        for invalid_count in (0, 1.5, True):
+            with self.subTest(stable_sample_count=invalid_count):
+                with self.assertRaises(ValueError):
+                    UdpPositionSource(
+                        sock=FakeSocket([]),
+                        stable_sample_count=invalid_count,
+                    )
 
 
 if __name__ == "__main__":

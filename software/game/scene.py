@@ -703,7 +703,7 @@ def _draw_safety_overlay(pygame: object, screen: object, width: int, height: int
     label_font = _font(pygame, width, 0.028, bold=True)
     small_font = _font(pygame, width, 0.022, bold=True)
     _center_text(screen, title_font, "Safety Pause", (151, 44, 31), (width // 2, round(height * 0.39)))
-    _center_text(screen, label_font, "Step back inside the 3 x 3 m play area", (72, 38, 22), (width // 2, round(height * 0.48)))
+    _center_text(screen, label_font, "Step back inside the 1.50 x 1.40 m play area", (72, 38, 22), (width // 2, round(height * 0.48)))
     _center_text(screen, small_font, "One life lost. Click pause or press P to resume.", (92, 54, 32), (width // 2, round(height * 0.55)))
     _draw_pause_button(pygame, screen, pygame.Rect(pause_button_rect(width, height)), active=True)
 
