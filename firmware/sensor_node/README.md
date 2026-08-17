@@ -4,11 +4,18 @@ This directory reproduces the superseded Version 1 network diagnostic. It is
 not the current V2 gameplay architecture and its independently timed packets
 must never be paired for triangulation, safety, or scoring.
 
-The active two-board V2 path is:
+The current two-board V2 migration baseline is:
 
 - `firmware/range_pair_host/range_pair_host.ino` on the left/host ESP32;
 - `firmware/range_station_right/range_station_right.ino` on the right ESP32;
 - `docs/TWO_BOARD_V2_RANGE_PAIR.md` for the complete procedure.
+
+The approved MVP target is a three-ESP32 S1-left/S2-centre/S3-right complete
+scan; S4 is spare. Its separate source paths are
+`firmware/three_sensor_host_left`, `firmware/three_sensor_station_centre`, and
+`firmware/three_sensor_station_right`. See
+`docs/THREE_ESP32_SENSOR_SCAN.md`. Those sketches do not turn this legacy
+Version 1 directory into an active target path.
 
 This legacy network design uses three ESP32-compatible boards and one laptop:
 

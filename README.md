@@ -6,23 +6,26 @@ screen dead zone, and a Python/Pygame application maps the estimated position to
 an on-screen hammer cursor.
 
 The repository contains a working game, simulated input, a paired Version 2 UDP
-tracking path, a software-only paired-range sender, a two-board ESP32 Phase 1
-implementation, and legacy bench diagnostics. End-to-end physical cursor
-movement has been demonstrated, but tracking quality, safety, power, enclosure,
+tracking path, a software-only paired-range sender, a two-board ESP32 tracker,
+and legacy bench diagnostics. That two-sensor path has demonstrated end-to-end
+physical cursor movement and is now the migration baseline for an approved
+three-sensor 3 x 3 cell tracker. Tracking quality, safety, power, enclosure,
 coverage, and Windows release compliance are not yet accepted.
 
 ## Source of truth
 
-The formal source is the 5 August 2026 Version 2.0 project brief. The supplied
-3-sensor tracking guide is a non-authoritative implementation proposal and does
-not replace the brief or the accepted two-range architecture. Their facts and
-conflicts are reconciled in [docs/SOURCE_FACTS.md](docs/SOURCE_FACTS.md).
+The formal source is the 5 August 2026 Version 2.0 project brief. The later
+Codex clarification approves the tracking architecture: use S1 left, S2 centre,
+and S3 right to confirm one of nine logical cells; keep S4 spare and unused.
+The clarification changes the implementation architecture but does not replace
+the brief's product constraints. Their authority and facts are reconciled in
+[docs/SOURCE_FACTS.md](docs/SOURCE_FACTS.md).
 
 The physical 3 x 3 grid mentioned in the guide must not be confused with the
 game's 3 x 3 arrangement of nine mole holes. The approved physical playable area
 is 1.50 m x 1.40 m.
 
-## Current Phase 1 architecture
+## Current tracker — migration baseline
 
 ```text
 left HC-SR04 -> left ESP32 host ---- V2 UDP ----> Windows laptop
@@ -43,10 +46,32 @@ post-triangulation position filtering, safety state, coordinate mapping, and
 rendering. Sensor-model-specific HC-SR04 or RCWL-1601 behavior must remain in
 firmware.
 
-Phase 1 uses exactly one fixed HC-SR04 per side and no servo. It proves only the
-central beam-overlap path. A servo or additional sensor is evidence-gated and
-must not be added before the Phase 1 tests in
-[docs/TRACKING_FEATURE.md](docs/TRACKING_FEATURE.md) pass.
+This path still uses exactly two active HC-SR04 sensors and two ESP32 boards. It
+is kept working for regression and migration; it is not the approved target.
+
+## Approved target tracker
+
+The target uses three of the four available RCWL-1601 modules:
+
+- S1 at the left, primarily associated with column 1;
+- S2 at the centre, primarily associated with column 2;
+- S3 at the right, primarily associated with column 3; and
+- S4 as an unused spare, excluded from telemetry, classification, safety, and
+  gameplay.
+
+One complete scan contains valid, fresh S1/S2/S3 measurements from the same
+cycle. The laptop calibrates and filters the readings, requires confidence and
+hysteresis before confirming a column, classifies the selected depth into a row
+with hysteresis, and exposes a row-major `PlayerCell` from 1 to 9. Raw `argmin`
+and uncertain candidates must never reach gameplay. No servo is part of this
+approved architecture.
+
+For the MVP, three ESP32 boards are assigned: the S1 left board is also the scan
+host, while dedicated S2 centre and S3 right boards respond to targeted ESP-NOW
+commands. This source path is separate from the current two-board tracker. The
+third board is additional to the two listed as supplied and must be included in
+the BOM/budget; final standalone-box and wireless compliance still require
+evidence. See [docs/THREE_ESP32_SENSOR_SCAN.md](docs/THREE_ESP32_SENSOR_SCAN.md).
 
 ## Quick start
 
@@ -114,9 +139,10 @@ playable cursor and suppress active play. The visual warning path exists; the
 audible warning function remains a stub and physical safety validation remains
 outstanding.
 
-## Version 2 packet
+## Current Version 2 packet
 
-One host packet represents one time-matched left/right cycle:
+The current migration-baseline packet represents one time-matched left/right
+cycle:
 
 ```json
 {
@@ -149,11 +175,45 @@ The Version 1 `software.transport.mock_udp_sender`, `udp_receiver`,
 `firmware/gateway_ap`, and `firmware/sensor_node` paths remain legacy regression
 tools. They are not the active V2 gameplay path.
 
+## Target Version 3 scan packet
+
+The separate three-ESP32 MVP emits one strict packet containing exactly S1,
+S2, and S3:
+
+```json
+{
+  "version": 3,
+  "type": "sensor_scan",
+  "cycle_id": 42,
+  "readings": [
+    {"sensor_id": "s1", "distance_mm": 900.0, "valid": true, "sample_time_ms": 1000},
+    {"sensor_id": "s2", "distance_mm": 1100.0, "valid": true, "sample_time_ms": 1035},
+    {"sensor_id": "s3", "distance_mm": 1300.0, "valid": true, "sample_time_ms": 1070}
+  ]
+}
+```
+
+The parser, diagnostic receiver, mock sender, and three firmware sketches now
+exist. They are not connected to Pygame or classification yet.
+
+Terminal 1:
+
+```bash
+.venv/bin/python -m software.transport.sensor_scan_receiver --host 127.0.0.1
+```
+
+Terminal 2:
+
+```bash
+.venv/bin/python -m software.transport.mock_sensor_scan_sender
+```
+
 ## Hardware facts and constraints
 
 The formal brief supplies 2 ESP32 boards, 2 antennas, 4 RCWL-1601 sensors,
 2 battery packs containing 4 AA NiMH cells and a holder, perfboard, and
-connectors. The current Phase 1 bench instead uses the two supplied/available
+connectors. Three RCWL-1601 modules are assigned to the approved target and the
+fourth is spare. The current bench instead uses the two supplied/available
 ESP32 boards with two HC-SR04 modules for early integration.
 
 Mandatory constraints include:
@@ -176,8 +236,9 @@ operation. Never move VCC to 5 V while Echo remains directly connected; a
 verified protected Echo interface is required before calibration or final use.
 
 See [docs/TWO_BOARD_V2_RANGE_PAIR.md](docs/TWO_BOARD_V2_RANGE_PAIR.md) for the
-active physical procedure and [docs/TWO_SENSOR_USB_BENCH.md](docs/TWO_SENSOR_USB_BENCH.md)
-for the separate dual-USB diagnostic.
+current migration-baseline procedure and
+[docs/TWO_SENSOR_USB_BENCH.md](docs/TWO_SENSOR_USB_BENCH.md) for the separate
+dual-USB diagnostic. Neither procedure implements the target centre sensor.
 
 ## Current game behavior
 
@@ -209,15 +270,14 @@ proved the end-to-end paired cursor path but accepted only 316 of 885 cycles
 accuracy, full coverage, power life, enclosure compliance, or final safety.
 See [docs/V1_1_CURRENT_IMPLEMENTATION_REPORT.md](docs/V1_1_CURRENT_IMPLEMENTATION_REPORT.md).
 
-## Next evidence gate
+## Next migration gate
 
-1. Build and verify protected 5 V HC-SR04 interfaces.
-2. Record separate sensor calibration/repeatability data at known distances.
-3. Re-run central-overlap tracking and measure valid-fix rate, accuracy,
-   latency, jitter, and loss duration.
-4. Restore safety by default and verify repeated dead-zone crossings with
-   audible and visual output.
-5. Test the complete field on a 0.30 m grid before deciding on servos or more
-   sensors.
-6. Validate four-AA runtime, standalone enclosures, budget, and Windows
-   installation.
+1. Compile and upload the separate S1-host, S2-centre, and S3-right sketches.
+2. Physically verify three sequential, non-overlapping measurements per cycle;
+   keep S4 absent and record scan timing/miss rate.
+3. Review that evidence before adding calibration or filtering.
+4. Add calibration, median filtering, confidence, and column hysteresis.
+5. Add row thresholds/hysteresis and expose only a confirmed `PlayerCell`.
+6. Integrate cells into gameplay, then restore and physically verify safety.
+7. Validate full-cell coverage, latency, four-AA runtime, enclosures, budget,
+   and Windows installation.

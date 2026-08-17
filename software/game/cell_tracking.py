@@ -1,4 +1,10 @@
-"""Pure mapping from V2 world positions to logical gameplay cells."""
+"""Logical cell domain plus a compatibility mapper for current V2 positions.
+
+The approved three-sensor tracker will produce confirmed cells from calibrated
+S1/S2/S3 scan evidence. ``world_position_to_cell`` exists only to bridge the
+current two-sensor triangulation path during migration; it is not the target
+sensor classifier and must not be used to bypass confidence or hysteresis.
+"""
 
 from __future__ import annotations
 
@@ -38,13 +44,14 @@ class PlayerCell:
 
 
 def world_position_to_cell(position: object) -> Optional[PlayerCell]:
-    """Classify one playable V2 world position into a logical cell.
+    """Map one current-tracker world position into a compatibility cell.
 
     Row 1 is nearest the screen and row 3 is farthest away. Cells are
     half-open at their internal boundaries, so a point exactly on a boundary
     enters the next column or row. The outer right and rear edges remain part
     of column 3 and row 3. Invalid or out-of-playable positions return ``None``
-    rather than being clamped into a plausible cell.
+    rather than being clamped into a plausible cell. The target tracker instead
+    confirms a column and row from a complete S1/S2/S3 scan.
     """
 
     if not isinstance(position, (tuple, list)) or len(position) != 2:
