@@ -223,13 +223,27 @@ the selected sensor's ground-truth error, range, cycle gaps, and duplicates.
 Repeat at 500 mm and 1000 mm for S1, S2, and S3 before setting calibration
 offsets.
 
+For the temporary presentation-only three-sensor cursor demo, close every
+other program using UDP port 5005 and run:
+
+```bash
+.venv/bin/python -m software.game.main --input sensor-scan
+```
+
+Press `Enter`, `Space`, or Start after the game opens. This isolated input uses
+the smallest valid S1/S2/S3 range, requires two consecutive wins before a
+column switch, clamps depth to 0–2 m, and smoothly interpolates only the
+rendered cursor. It is not calibrated production tracking and cannot be used
+with `--enable-safety`. See `docs/THREE_SENSOR_PRESENTATION_MVP.md`.
+
 ## Hardware facts and constraints
 
 The formal brief supplies 2 ESP32 boards, 2 antennas, 4 RCWL-1601 sensors,
 2 battery packs containing 4 AA NiMH cells and a holder, perfboard, and
 connectors. Three RCWL-1601 modules are assigned to the approved target and the
-fourth is spare. The current bench instead uses the two supplied/available
-ESP32 boards with two HC-SR04 modules for early integration.
+fourth is spare. The preserved paired baseline uses the two supplied ESP32s;
+the current presentation setup uses a third ESP32 available to the team so S1,
+S2, and S3 each have a dedicated board.
 
 Mandatory constraints include:
 

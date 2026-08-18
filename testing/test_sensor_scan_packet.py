@@ -2,12 +2,15 @@ import copy
 import json
 import unittest
 
-from software.game.sensor_scan import SensorId
+from software.game.sensor_scan import SensorId, SensorReading, SensorScan
 from software.transport.mock_sensor_scan_sender import (
     build_sensor_scan_payload,
     encode_payload,
 )
-from software.transport.sensor_scan_packet import parse_sensor_scan_packet
+from software.transport.sensor_scan_packet import (
+    encode_sensor_scan_packet,
+    parse_sensor_scan_packet,
+)
 
 
 class SensorScanPacketTests(unittest.TestCase):
@@ -26,6 +29,34 @@ class SensorScanPacketTests(unittest.TestCase):
         self.assertEqual(scan.reading_for(SensorId.S2).distance_mm, 1000.0)
         self.assertEqual(scan.reading_for(SensorId.S3).sample_time_ms, 570)
         self.assertTrue(scan.all_valid)
+
+    def test_domain_scan_encoder_uses_exact_schema_and_canonical_order(self) -> None:
+        scan = SensorScan(
+            cycle_id=9,
+            readings=(
+                SensorReading(SensorId.S3, 1300.0, True, 70),
+                SensorReading(SensorId.S1, 900.0, True, 0),
+                SensorReading(SensorId.S2, None, False, 35),
+            ),
+        )
+
+        encoded = encode_sensor_scan_packet(scan)
+        payload = json.loads(encoded)
+
+        self.assertEqual(
+            list(payload), ["version", "type", "cycle_id", "readings"]
+        )
+        self.assertEqual(
+            [reading["sensor_id"] for reading in payload["readings"]],
+            ["s1", "s2", "s3"],
+        )
+        decoded = parse_sensor_scan_packet(encoded)
+        self.assertIsNotNone(decoded)
+        self.assertEqual(decoded.cycle_id, scan.cycle_id)
+        for sensor_id in SensorId:
+            self.assertEqual(
+                decoded.reading_for(sensor_id), scan.reading_for(sensor_id)
+            )
 
     def test_invalid_acquisition_remains_part_of_complete_scan(self) -> None:
         payload = build_sensor_scan_payload(3, (900.0, None, 1100.0))

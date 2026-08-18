@@ -30,6 +30,11 @@ try:
         start_button_rect,
     )
     from .sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
+    from .presentation_tracking import (
+        PresentationTrackingSnapshot,
+        PresentationTrackingSource,
+        interpolate_position,
+    )
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
     from .udp_position import TrackingSnapshot, TrackingStatus, UdpPositionSource
 except ImportError:
@@ -47,6 +52,11 @@ except ImportError:
         start_button_rect,
     )
     from sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
+    from presentation_tracking import (
+        PresentationTrackingSnapshot,
+        PresentationTrackingSource,
+        interpolate_position,
+    )
     from simulated_position import PhysicalPosition, SimulatedPositionSource
     from udp_position import TrackingSnapshot, TrackingStatus, UdpPositionSource
 
@@ -288,6 +298,11 @@ def run(
 ) -> int:
     """Open the game; safety gates are opt-in during tracking development."""
 
+    if input_source not in {"simulated", "udp", "sensor-scan"}:
+        raise ValueError("input_source must be simulated, udp, or sensor-scan")
+    if input_source == "sensor-scan" and safety_enabled:
+        raise ValueError("the presentation sensor-scan input is not a safety input")
+
     logger.info(
         "Game run starting input_source=%s smoke_test=%s safety_enabled=%s",
         input_source,
@@ -316,7 +331,12 @@ def run(
     mapper = create_mapper(screen.get_size(), tracking_only=not safety_enabled)
     simulated_source = SimulatedPositionSource()
     udp_source = UdpPositionSource() if input_source == "udp" else None
+    presentation_source = (
+        PresentationTrackingSource() if input_source == "sensor-scan" else None
+    )
+    position_source = udp_source or presentation_source
     start_ticks = pygame.time.get_ticks()
+    last_frame_ticks = start_ticks
     game_start_ticks = start_ticks
     total_paused_ms = 0
     pause_started_ticks: Optional[int] = None
@@ -329,6 +349,21 @@ def run(
     lives = STARTING_LIVES
     audible_warning_active = False
     sensor_snapshot = sensor_overlay.poll() if sensor_overlay is not None else None
+    presentation_snapshot: Optional[PresentationTrackingSnapshot] = (
+        presentation_source.tracking_snapshot
+        if presentation_source is not None
+        else None
+    )
+    render_physical_position = STATIC_POSITION_M
+
+    def poll_tracking_source():
+        nonlocal presentation_snapshot
+        if position_source is None:
+            return None
+        tracking = position_source.poll()
+        if presentation_source is not None:
+            presentation_snapshot = tracking
+        return tracking
 
     def current_gameplay_ui(
         remaining_seconds: int,
@@ -339,6 +374,11 @@ def run(
             lives=lives if displayed_lives is None else displayed_lives,
             remaining_seconds=remaining_seconds,
             sensor_overlay=sensor_snapshot,
+            tracking_debug_lines=(
+                presentation_snapshot.diagnostic_lines
+                if presentation_snapshot is not None
+                else ()
+            ),
         )
 
     if smoke_test:
@@ -379,8 +419,8 @@ def run(
             screen_warning=True,
         )
         draw_game_over_screen(screen, score, sensor_snapshot)
-        if udp_source is not None:
-            udp_source.close()
+        if position_source is not None:
+            position_source.close()
         _close_sensor_overlay(sensor_overlay)
         pygame.quit()
         return 0
@@ -389,6 +429,8 @@ def run(
         running = True
         while running:
             now_ticks = pygame.time.get_ticks()
+            frame_delta_s = max(0.0, now_ticks - last_frame_ticks) / 1000.0
+            last_frame_ticks = now_ticks
             if sensor_overlay is not None:
                 sensor_snapshot = sensor_overlay.poll()
             for event in pygame.event.get():
@@ -462,12 +504,12 @@ def run(
                 if not audible_warning_active:
                     set_audible_warning_active(True)
                     audible_warning_active = True
-                if udp_source is None:
+                if position_source is None:
                     input_elapsed_s = max(0, now_ticks - game_start_ticks) / 1000.0
                     physical_position = simulated_source.position_at(input_elapsed_s)
                     tracking_status = TrackingStatus.PLAYABLE
                 else:
-                    tracking = udp_source.poll()
+                    tracking = poll_tracking_source()
                     tracking_status = tracking.status
                     physical_position = tracking.world_position
                 if tracking_status in (TrackingStatus.WAITING, TrackingStatus.TRACKING_LOST):
@@ -520,7 +562,7 @@ def run(
                         screen_warning=True,
                     )
             elif game_state == "tracking_lost":
-                tracking = udp_source.poll() if udp_source is not None else None
+                tracking = poll_tracking_source()
                 if tracking is not None and tracking.status in (
                     TrackingStatus.PLAYABLE,
                     TrackingStatus.DEAD_ZONE,
@@ -566,17 +608,26 @@ def run(
                     game_state = "game_over"
                     draw_game_over_screen(screen, score, sensor_snapshot)
                 else:
-                    if udp_source is None:
+                    if position_source is None:
                         physical_position = simulated_source.position_at(game_elapsed_s)
                         tracking_status = TrackingStatus.PLAYABLE
                     else:
-                        tracking = udp_source.poll()
+                        tracking = poll_tracking_source()
                         tracking_status = tracking.status
-                        physical_position = (
+                        target_position = (
                             tracking.world_position
                             if safety_enabled
                             else tracking_only_position(tracking)
                         )
+                        if presentation_source is not None:
+                            render_physical_position = interpolate_position(
+                                render_physical_position,
+                                target_position,
+                                frame_delta_s,
+                            )
+                            physical_position = render_physical_position
+                        else:
+                            physical_position = target_position
                     if safety_enabled and tracking_status in (
                         TrackingStatus.WAITING,
                         TrackingStatus.TRACKING_LOST,
@@ -678,8 +729,8 @@ def run(
     finally:
         if audible_warning_active:
             set_audible_warning_active(False)
-        if udp_source is not None:
-            udp_source.close()
+        if position_source is not None:
+            position_source.close()
         _close_sensor_overlay(sensor_overlay)
         pygame.quit()
         logger.info("Game run stopped")
@@ -690,9 +741,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Run the Whack-a-Mole game.")
     parser.add_argument(
         "--input",
-        choices=("simulated", "udp"),
+        choices=("simulated", "udp", "sensor-scan"),
         default="simulated",
-        help="Use built-in movement or V2 paired-range UDP cursor input.",
+        help=(
+            "Use built-in movement, V2 paired-range UDP, or the temporary "
+            "Version 3 presentation cursor input."
+        ),
     )
     parser.add_argument(
         "--serial-overlay",
@@ -715,6 +769,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+
+    if args.input == "sensor-scan" and args.enable_safety:
+        parser.error("--input sensor-scan cannot be used with --enable-safety")
 
     log_path = configure_logging(args.log_file)
     logger.info("Parsed command line args=%s", vars(args))

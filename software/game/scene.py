@@ -83,6 +83,7 @@ class GameplayUi:
     lives: int = 3
     remaining_seconds: int = 60
     sensor_overlay: SensorOverlaySnapshot | None = None
+    tracking_debug_lines: tuple[str, ...] = ()
 
 
 def hole_positions(width: int, height: int) -> tuple[ScreenPosition, ...]:
@@ -265,6 +266,14 @@ def draw_scene(
         active_index=active_hole_index,
         mole_highlighted=mole_highlighted,
     )
+    if active_ui.tracking_debug_lines:
+        _draw_tracking_debug(
+            pygame,
+            screen,
+            width,
+            height,
+            active_ui.tracking_debug_lines,
+        )
     _draw_cursor(pygame, screen, cursor_position)
     if safety_alert:
         _draw_safety_overlay(pygame, screen, width, height)
@@ -513,6 +522,47 @@ def _draw_gameplay_hud(pygame: object, screen: object, width: int, height: int, 
     pygame.draw.rect(screen, BUTTON_YELLOW_DARK, score_rect, width=3, border_radius=8)
     screen.blit(score_surface, score_surface.get_rect(center=score_rect.center))
     _draw_pause_button(pygame, screen, pause_panel, active=False)
+
+
+def _draw_tracking_debug(
+    pygame: object,
+    screen: object,
+    width: int,
+    height: int,
+    lines: Sequence[str],
+) -> None:
+    """Draw plain presentation telemetry without owning tracking decisions."""
+
+    margin = max(6, round(min(width, height) * 0.012))
+    panel_width = min(max(220, round(width * 0.34)), width - margin * 2)
+    line_height = max(17, round(height * 0.026))
+    padding = max(7, round(line_height * 0.45))
+    panel_height = min(
+        height - margin * 2,
+        padding * 2 + line_height * len(lines),
+    )
+    panel_top = min(
+        height - margin - panel_height,
+        round(height * 0.12),
+    )
+    panel = pygame.Rect(margin, panel_top, panel_width, panel_height)
+    pygame.draw.rect(screen, (20, 34, 43), panel, border_radius=8)
+    pygame.draw.rect(screen, CURSOR_COLOR, panel, width=2, border_radius=8)
+
+    for index, raw_line in enumerate(lines):
+        y = panel.top + padding + index * line_height
+        if y + line_height > panel.bottom:
+            break
+        line = str(raw_line)
+        font = _fitted_font(
+            pygame,
+            line,
+            max(1, panel.width - padding * 2),
+            max(10, round(line_height * 0.68)),
+            bold=True,
+        )
+        surface = font.render(line, True, WHITE)
+        screen.blit(surface, (panel.left + padding, y))
 
 
 def _draw_sensor_overlay(

@@ -69,6 +69,7 @@ class SceneLayoutTests(unittest.TestCase):
         self.assertEqual(ui.lives, 3)
         self.assertEqual(ui.remaining_seconds, 60)
         self.assertIsNone(ui.sensor_overlay)
+        self.assertEqual(ui.tracking_debug_lines, ())
 
     def test_sensor_overlay_layout_stays_inside_common_window_sizes(self) -> None:
         for window_width, window_height in ((320, 240), (640, 480), (900, 900), (1280, 720)):

@@ -15,6 +15,33 @@ _PACKET_FIELDS = {"version", "type", "cycle_id", "readings"}
 _READING_FIELDS = {"sensor_id", "distance_mm", "valid", "sample_time_ms"}
 
 
+def encode_sensor_scan_packet(scan: SensorScan) -> bytes:
+    """Encode one complete scan using the canonical Version 3 JSON schema."""
+
+    if not isinstance(scan, SensorScan):
+        raise TypeError("scan must be a SensorScan")
+
+    readings = []
+    for sensor_id in SensorId:
+        reading = scan.reading_for(sensor_id)
+        readings.append(
+            {
+                "sensor_id": sensor_id.value,
+                "distance_mm": reading.distance_mm,
+                "valid": reading.valid,
+                "sample_time_ms": reading.sample_time_ms,
+            }
+        )
+
+    payload = {
+        "version": SENSOR_SCAN_VERSION,
+        "type": SENSOR_SCAN_TYPE,
+        "cycle_id": scan.cycle_id,
+        "readings": readings,
+    }
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
 def parse_sensor_scan_packet(raw_packet: object) -> Optional[SensorScan]:
     """Parse one complete scan, returning ``None`` for unsupported input.
 
