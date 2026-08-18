@@ -66,12 +66,15 @@ with hysteresis, and exposes a row-major `PlayerCell` from 1 to 9. Raw `argmin`
 and uncertain candidates must never reach gameplay. No servo is part of this
 approved architecture.
 
-For the MVP, three ESP32 boards are assigned: the S1 left board is also the scan
-host, while dedicated S2 centre and S3 right boards respond to targeted ESP-NOW
-commands. This source path is separate from the current two-board tracker. The
-third board is additional to the two listed as supplied and must be included in
-the BOM/budget; final standalone-box and wireless compliance still require
-evidence. See [docs/THREE_ESP32_SENSOR_SCAN.md](docs/THREE_ESP32_SENSOR_SCAN.md).
+For the target, an iPhone 13 Personal Hotspot provides the shared Wi-Fi network
+and the Windows laptop is the only scan coordinator. Three independent ESP32
+stations obtain addresses through DHCP, send unicast registration heartbeats
+to the configured laptop IPv4 address, and measure only after their matching
+S1/S2/S3 UDP command. The former S1-host/ESP-NOW source remains separately as a
+regression baseline. The third board is additional to the two listed as
+supplied and must be included in the BOM/budget; final standalone-box and
+wireless compliance still require evidence. See
+[docs/LAPTOP_SENSOR_COORDINATOR.md](docs/LAPTOP_SENSOR_COORDINATOR.md).
 
 ## Quick start
 
@@ -193,8 +196,54 @@ S2, and S3:
 }
 ```
 
-The parser, diagnostic receiver, mock sender, and three firmware sketches now
-exist. They are not connected to Pygame or classification yet.
+The parser, laptop coordinator, diagnostic tools, and three Phase 2 Wi-Fi/UDP
+station sketches now exist. Source tests pass, but Arduino compilation/upload,
+phone-hotspot communication, and physical S1/S2/S3 telemetry remain unverified.
+
+### Configure the Phase 2 stations locally
+
+The active target sketches are:
+
+- `firmware/three_sensor_wifi_station_left` for S1;
+- `firmware/three_sensor_wifi_station_centre` for S2; and
+- `firmware/three_sensor_wifi_station_right` for S3.
+
+Each directory contains exactly one self-contained Arduino sketch. The S1, S2,
+and S3 identities are permanently fixed in their respective files, so no
+sensor-index edit is required before upload. In each `.ino`, enter the hotspot
+SSID/password and laptop IPv4 address at the top, then upload that file only to
+the labelled board. Restore the password placeholder immediately after upload
+and before staging or committing the tracked file. The iPhone gateway address
+is not the laptop address.
+
+On Ubuntu, find the active hotspot address with
+`ip -4 -brief address show wlp0s20f3`; use the four address octets, without the
+CIDR suffix, as `COORDINATOR_IP`. Permit inbound UDP 5006 on the active Wi-Fi
+interface without disabling the firewall.
+
+On the iPhone, enable **Settings > Personal Hotspot > Allow Others to Join** and
+**Maximize Compatibility**. Connect the Windows laptop to that hotspot and run
+`ipconfig`; use the **IPv4 Address** under the active Wi-Fi adapter in all three
+local configuration files. Permit inbound UDP 5006 in Windows Firewall without
+disabling the firewall.
+
+Start a Version 3 consumer, then start the coordinator:
+
+```powershell
+python -m software.transport.sensor_scan_receiver --host 127.0.0.1
+```
+
+```powershell
+python -m software.transport.sensor_coordinator `
+  --bind-host 0.0.0.0 --control-port 5006 `
+  --output-host 127.0.0.1 --output-port 5005
+```
+
+Flash and validate S1 alone before S2 and S3. At 115200 baud, require the
+correct identity, DHCP address, configured coordinator address, immediate and
+one-second HELLO activity, matching command cycle, and plausible result. If the
+iPhone lists both devices but the coordinator never registers S1, suspect
+hotspot client isolation and stop; do not infer success from Serial `hello=sent`.
 
 Terminal 1:
 
