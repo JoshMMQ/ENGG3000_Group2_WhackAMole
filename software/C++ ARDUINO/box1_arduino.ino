@@ -10,6 +10,7 @@
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include "ultrasonic.cpp"
 
 // ---------- WiFi config ----------
 const char* SSID     = "CHINKHUSEL 5444";
@@ -24,15 +25,17 @@ const int UDP_PORT = 4210;               // must match the port Python listens o
 const char* BROADCAST_IP = "255.255.255.255";
 
 // ---------- Sensor pins ----------
-const int trigPin = 19;
-const int echoPin = 18;
+// const int trigPin = 19;
+// const int echoPin = 18;
 
-float duration, distance;
+Ultrasonic BOX_1 = Ultrasonic(32, 35, BOX_ID, 40);
+
+// float duration, distance;
 
 void setup() {
   Serial.begin(115200);
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
+  pinMode(BOX_1.trigPin, OUTPUT);
+  pinMode(BOX_1.echoPin, INPUT);
 
   // --- Connect to laptop hotspot ---
   Serial.print("[");
@@ -58,29 +61,30 @@ void setup() {
 
 void loop() {
   // --- Read sensor (same as your existing test code) ---
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
+  float distance = BOX_1.detectPlayer()
+  // digitalWrite(trigPin, LOW);
+  // delayMicroseconds(2);
+  // digitalWrite(trigPin, HIGH);
+  // delayMicroseconds(10);
+  // digitalWrite(trigPin, LOW);
 
-  duration = pulseIn(echoPin, HIGH, 25000); // added timeout so it doesn't hang forever
-  distance = (duration * 0.0343) / 2;
+  // duration = pulseIn(echoPin, HIGH, 25000); // added timeout so it doesn't hang forever
+  // distance = (duration * 0.0343) / 2;
 
-  if (duration == 0) {
-    Serial.println("No echo");
-  } else {
-    Serial.print("Distance: ");
-    Serial.println(distance);
+  // if (duration == 0) {
+  //   Serial.println("No echo");
+  // } else {
+  //   Serial.print("Distance: ");
+  //   Serial.println(distance);
 
     // --- Build a simple message and send over UDP ---
     // Format: box1,123.4
-    String message = String(BOX_ID) + "," + String(distance, 1);
+    String message = String(BOX_ID) + "," + String(distance);
 
     udp.beginPacket(BROADCAST_IP, UDP_PORT);
     udp.print(message);
     udp.endPacket();
-  }
+  // }
 
   delay(100);
 }

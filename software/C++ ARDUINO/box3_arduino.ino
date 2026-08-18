@@ -17,7 +17,7 @@ const char* SSID     = "CHINKHUSEL 5444";
 const char* PASSWORD = "7h04*M36";
 
 // ---------- Box identity ----------
-const char* BOX_ID = "box2"; // change to "box2" on the other unit
+const char* BOX_ID = "box3"; // change to "box2" on the other unit
 
 // ---------- UDP config ----------
 WiFiUDP udp;
@@ -28,14 +28,14 @@ const char* BROADCAST_IP = "255.255.255.255";
 // const int trigPin = 19;
 // const int echoPin = 18;
 
-Ultrasonic BOX_2 = Ultrasonic(32, 35, BOX_ID, 40);
+Ultrasonic BOX_3 = Ultrasonic(32, 35, BOX_ID, 40);
 
 // float duration, distance;
 
 void setup() {
   Serial.begin(115200);
-  pinMode(BOX_2.trigPin, OUTPUT);
-  pinMode(BOX_2.echoPin, INPUT);
+  pinMode(BOX_3.trigPin, OUTPUT);
+  pinMode(BOX_3.echoPin, INPUT);
 
   // --- Connect to laptop hotspot ---
   Serial.print("[");
@@ -61,7 +61,7 @@ void setup() {
 
 void loop() {
   // --- Read sensor (same as your existing test code) ---
-  float distance = BOX_2.detectPlayer()
+  float distance = BOX_3.detectPlayer()
   // digitalWrite(trigPin, LOW);
   // delayMicroseconds(2);
   // digitalWrite(trigPin, HIGH);
