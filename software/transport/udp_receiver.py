@@ -3,35 +3,51 @@
 from __future__ import annotations
 
 import socket
-from typing import Optional, Tuple
+from typing import Optional
 
 from .packet import TelemetryPacket, parse_telemetry_packet
 
-DEFAULT_PORT = 5005
-BUFFER_SIZE = 4096
+DEFAULT_PORT = 4210          # must match ESP32 sketch's UDP_PORT
+BUFFER_SIZE = 1024
 
 
-def receive_packet(sock: socket.socket) -> Tuple[Optional[TelemetryPacket], Optional[tuple[str, int]]]:
-    """Receive one UDP datagram and decode it into a telemetry packet if valid."""
+def receive_packet(
+    sock: socket.socket, buffer_size: int = BUFFER_SIZE
+) -> tuple[Optional[TelemetryPacket], Optional[tuple[str, int]]]:
+    """Read one datagram and parse it, returning (packet, addr).
+
+    Returns (None, None) if no packet is available (non-blocking socket)
+    or the payload failed validation.
+    """
 
     try:
-        data, addr = sock.recvfrom(BUFFER_SIZE)
-    except (BlockingIOError, OSError):
+        data, addr = sock.recvfrom(buffer_size)
+    except OSError:
         return None, None
-
-    packet = parse_telemetry_packet(data)
-    if packet is None:
-        return None, addr
-    return packet, addr
+    return parse_telemetry_packet(data), addr
 
 
-def main() -> None:
+def format_packet(packet: TelemetryPacket, sender_address: tuple[str, int]) -> str:
+    """Format a decoded telemetry packet as a one-line diagnostic string."""
+
+    readings = " ".join(
+        f"{reading.sensor_id}={reading.distance_mm}mm" if reading.valid else f"{reading.sensor_id}=invalid"
+        for reading in packet.readings
+    )
+    return f"[{sender_address[0]}] node={packet.node_id} seq={packet.sequence} {readings}"
+
+
+def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    # Bind to all interfaces on this port to catch broadcast packets
     sock.bind(("", DEFAULT_PORT))
 
     print(f"Listening for UDP packets on port {DEFAULT_PORT}...")
-    print("Waiting for telemetry packets. Press Ctrl+C to stop.\n")
+    print("Waiting for box1 / box2 readings. Press Ctrl+C to stop.\n")
+
+    latest_readings = {}  # e.g. {"box1": 45.2, "box2": 120.7}
 
     try:
         while True:

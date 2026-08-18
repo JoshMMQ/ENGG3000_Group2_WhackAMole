@@ -25,6 +25,7 @@ try:
     )
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
     from .udp_position import UdpPositionSource
+    from .box_position import BoxPositionSource, SingleBoxPositionSource, WallTriangulationMapper
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
     from scene import (
@@ -40,16 +41,22 @@ except ImportError:
     )
     from simulated_position import PhysicalPosition, SimulatedPositionSource
     from udp_position import UdpPositionSource
+    from box_position import BoxPositionSource, SingleBoxPositionSource, WallTriangulationMapper
 
 
 WINDOW_WIDTH_PX = 900
 WINDOW_HEIGHT_PX = 900
-STATIC_POSITION_M = (1.5, 1.5)
+PLAY_AREA_WIDTH_M = 1.5
+PLAY_AREA_HEIGHT_M = 1.4
+DEAD_ZONE_DEPTH_M = 0.6
+BOX_SENSE_DEPTH_M = DEAD_ZONE_DEPTH_M + PLAY_AREA_HEIGHT_M
+STATIC_POSITION_M = (PLAY_AREA_WIDTH_M / 2.0, PLAY_AREA_HEIGHT_M / 2.0)
 FRAME_RATE = 60
 LOADING_SECONDS = 1.0
 GAME_SECONDS = 60
 MOLE_INTERVAL_SECONDS = 1.75
 HIT_RADIUS_PX = 70
+POINTS_PER_HIT = 100
 
 
 def mapped_cursor_position(
@@ -58,7 +65,7 @@ def mapped_cursor_position(
 ) -> ScreenPosition:
     """Return the screen position for a physical metre position."""
 
-    active_mapper = mapper or CoordinateMapper()
+    active_mapper = mapper or create_mapper()
     position = active_mapper.physical_to_screen(*physical_position)
     if position is None:
         raise ValueError("cursor position must be valid")
@@ -68,13 +75,38 @@ def mapped_cursor_position(
 def create_mapper(screen_size: ScreenPosition = (WINDOW_WIDTH_PX, WINDOW_HEIGHT_PX)) -> CoordinateMapper:
     """Create a coordinate mapper for the active window size."""
 
-    return CoordinateMapper(screen_width_px=screen_size[0], screen_height_px=screen_size[1])
+    return CoordinateMapper(
+        play_area_width_m=PLAY_AREA_WIDTH_M,
+        play_area_height_m=PLAY_AREA_HEIGHT_M,
+        screen_width_px=screen_size[0],
+        screen_height_px=screen_size[1],
+    )
 
 
 def static_cursor_position(mapper: Optional[CoordinateMapper] = None) -> ScreenPosition:
     """Return the screen position for the prototype's static centre cursor."""
 
     return mapped_cursor_position(STATIC_POSITION_M, mapper)
+
+
+def is_inside_dead_zone(position_from_wall: PhysicalPosition, dead_zone_depth_m: float = DEAD_ZONE_DEPTH_M) -> bool:
+    """Return whether a wall-relative box position falls inside the screen dead-zone."""
+
+    _, y_from_wall_m = position_from_wall
+    return 0.0 <= y_from_wall_m <= dead_zone_depth_m
+
+
+def play_area_position(position_from_wall: PhysicalPosition) -> PhysicalPosition:
+    """Convert a wall-relative box position into play-area-relative coordinates.
+
+    box1/box2 are mounted at the wall, so their triangulated position has y=0
+    at the wall. The play area only starts after the dead-zone, so this shifts
+    and clamps y into the [0, PLAY_AREA_HEIGHT_M] range the cursor mapper expects.
+    """
+
+    x_m, y_from_wall_m = position_from_wall
+    y_play_area_m = max(0.0, min(y_from_wall_m - DEAD_ZONE_DEPTH_M, PLAY_AREA_HEIGHT_M))
+    return x_m, y_play_area_m
 
 
 def active_hole_index_at(elapsed_s: float, interval_s: float = MOLE_INTERVAL_SECONDS) -> int:
@@ -120,13 +152,14 @@ def draw_frame(
     active_hole_index: int = 4,
     mole_highlighted: bool = False,
     paused: bool = False,
+    dead_zone_alert: bool = False,
 ) -> None:
     """Draw the current prototype frame."""
 
     if pygame is None:
         raise RuntimeError("pygame is required to draw the game window")
 
-    draw_scene(screen, cursor_position, ui, active_hole_index, mole_highlighted, paused)
+    draw_scene(screen, cursor_position, ui, active_hole_index, mole_highlighted, paused, dead_zone_alert)
 
 
 def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
@@ -145,8 +178,23 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
     pygame.display.set_caption("Whack-a-Mole Prototype")
     clock = pygame.time.Clock()
     mapper = create_mapper(screen.get_size())
-    simulated_source = SimulatedPositionSource()
+    simulated_source = SimulatedPositionSource(
+        play_area_width_m=PLAY_AREA_WIDTH_M,
+        play_area_height_m=PLAY_AREA_HEIGHT_M,
+    )
     udp_source = UdpPositionSource() if input_source == "udp" else None
+    box_source = (
+        BoxPositionSource(
+            mapper=WallTriangulationMapper(baseline_m=PLAY_AREA_WIDTH_M, depth_m=BOX_SENSE_DEPTH_M)
+        )
+        if input_source == "boxes"
+        else None
+    )
+    single_box_source = (
+        SingleBoxPositionSource(centre_x_m=PLAY_AREA_WIDTH_M / 2.0, max_depth_m=BOX_SENSE_DEPTH_M)
+        if input_source == "box"
+        else None
+    )
     start_ticks = pygame.time.get_ticks()
     game_start_ticks = start_ticks
     total_paused_ms = 0
@@ -155,8 +203,10 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
     last_cursor_position = static_cursor_position(mapper)
     last_active_hole_index = active_hole_index_at(0.0)
     last_mole_highlighted = False
+    last_dead_zone_alert = False
     game_state = "loading"
     score = 0
+    last_scored_hole_index: Optional[int] = None
 
     if smoke_test:
         cursor_position = mapped_cursor_position(simulated_source.position_at(0.0), mapper)
@@ -177,9 +227,21 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
             False,
             paused=True,
         )
+        draw_frame(
+            screen,
+            cursor_position,
+            GameplayUi(score=score, lives=3, remaining_seconds=GAME_SECONDS),
+            active_hole_index_at(0.0),
+            False,
+            dead_zone_alert=True,
+        )
         draw_game_over_screen(screen, score)
         if udp_source is not None:
             udp_source.close()
+        if box_source is not None:
+            box_source.close()
+        if single_box_source is not None:
+            single_box_source.close()
         pygame.quit()
         return 0
 
@@ -202,7 +264,9 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                             last_game_elapsed_s = 0.0
                             last_active_hole_index = active_hole_index_at(0.0)
                             last_mole_highlighted = False
+                            last_dead_zone_alert = False
                             score = 0
+                            last_scored_hole_index = None
                     elif event.key == pygame.K_p:
                         if game_state == "playing":
                             game_state = "paused"
@@ -231,7 +295,9 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         last_game_elapsed_s = 0.0
                         last_active_hole_index = active_hole_index_at(0.0)
                         last_mole_highlighted = False
+                        last_dead_zone_alert = False
                         score = 0
+                        last_scored_hole_index = None
                     elif game_state == "game_over" and pygame.Rect(continue_button_rect(width, height)).collidepoint(event.pos):
                         game_state = "playing"
                         game_start_ticks = now_ticks
@@ -240,7 +306,9 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         last_game_elapsed_s = 0.0
                         last_active_hole_index = active_hole_index_at(0.0)
                         last_mole_highlighted = False
+                        last_dead_zone_alert = False
                         score = 0
+                        last_scored_hole_index = None
 
             if game_state == "loading":
                 progress = (now_ticks - start_ticks) / 1000.0 / LOADING_SECONDS
@@ -261,6 +329,7 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     last_active_hole_index,
                     last_mole_highlighted,
                     paused=True,
+                    dead_zone_alert=last_dead_zone_alert,
                 )
             else:
                 game_elapsed_s = gameplay_elapsed_seconds(now_ticks, game_start_ticks, total_paused_ms)
@@ -270,14 +339,23 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                     game_state = "game_over"
                     draw_game_over_screen(screen, score)
                 else:
-                    if udp_source is None:
-                        physical_position = simulated_source.position_at(game_elapsed_s)
-                    else:
+                    dead_zone_alert = False
+                    if udp_source is not None:
                         physical_position = udp_source.poll_position()
+                    elif box_source is not None:
+                        position_from_wall = box_source.poll_position()
+                        dead_zone_alert = is_inside_dead_zone(position_from_wall)
+                        physical_position = play_area_position(position_from_wall)
+                    elif single_box_source is not None:
+                        position_from_wall = single_box_source.poll_position()
+                        dead_zone_alert = is_inside_dead_zone(position_from_wall)
+                        physical_position = play_area_position(position_from_wall)
+                    else:
+                        physical_position = simulated_source.position_at(game_elapsed_s)
+                    last_dead_zone_alert = dead_zone_alert
                     mapper = create_mapper(screen.get_size())
                     cursor_position = mapped_cursor_position(physical_position, mapper)
                     last_cursor_position = cursor_position
-                    ui = GameplayUi(score=score, lives=3, remaining_seconds=remaining_seconds)
                     active_hole_index = active_hole_index_at(game_elapsed_s)
                     last_active_hole_index = active_hole_index
                     mole_position = active_mole_position(*screen.get_size(), active_hole_index=active_hole_index)
@@ -287,18 +365,35 @@ def run(smoke_test: bool = False, input_source: str = "simulated") -> int:
                         scaled_hit_radius(screen.get_size()),
                     )
                     last_mole_highlighted = mole_highlighted
-                    draw_frame(screen, cursor_position, ui, active_hole_index, mole_highlighted)
+                    if mole_highlighted and last_scored_hole_index != active_hole_index:
+                        score += POINTS_PER_HIT
+                        last_scored_hole_index = active_hole_index
+                    ui = GameplayUi(score=score, lives=3, remaining_seconds=remaining_seconds)
+                    draw_frame(
+                        screen, cursor_position, ui, active_hole_index, mole_highlighted, dead_zone_alert=dead_zone_alert
+                    )
             clock.tick(FRAME_RATE)
     finally:
         if udp_source is not None:
             udp_source.close()
+        if box_source is not None:
+            box_source.close()
+        if single_box_source is not None:
+            single_box_source.close()
         pygame.quit()
     return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
-    input_source = "udp" if "--input" in args and "udp" in args else "simulated"
+    input_source = "simulated"
+    if "--input" in args:
+        if "boxes" in args:
+            input_source = "boxes"
+        elif "box" in args:
+            input_source = "box"
+        elif "udp" in args:
+            input_source = "udp"
     return run(smoke_test="--smoke-test" in args, input_source=input_source)
 
 

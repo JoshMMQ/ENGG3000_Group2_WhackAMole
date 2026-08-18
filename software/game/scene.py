@@ -48,6 +48,8 @@ CURSOR_OUTLINE_COLOR = (248, 253, 255)
 HAMMER_WOOD = (194, 119, 31)
 HAMMER_WOOD_LIGHT = (231, 160, 55)
 HAMMER_WOOD_DARK = (121, 72, 24)
+DEAD_ZONE_RED = (214, 40, 40)
+DEAD_ZONE_RED_DARK = (140, 20, 20)
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,7 @@ def draw_scene(
     active_hole_index: int = 4,
     mole_highlighted: bool = False,
     paused: bool = False,
+    dead_zone_alert: bool = False,
 ) -> None:
     """Draw the current gameplay frame."""
 
@@ -167,6 +170,8 @@ def draw_scene(
         mole_highlighted=mole_highlighted,
     )
     _draw_cursor(pygame, screen, cursor_position)
+    if dead_zone_alert:
+        _draw_dead_zone_alert(pygame, screen, width, height)
     if paused:
         _draw_pause_overlay(pygame, screen, width, height)
     pygame.display.flip()
@@ -440,6 +445,28 @@ def _draw_pause_overlay(pygame: object, screen: object, width: int, height: int)
     _center_text(screen, title_font, "Paused", (72, 38, 22), (width // 2, round(height * 0.425)))
     _center_text(screen, label_font, "Click pause or press P to resume", (92, 54, 32), (width // 2, round(height * 0.505)))
     _draw_pause_button(pygame, screen, pygame.Rect(pause_button_rect(width, height)), active=True)
+
+
+def _draw_dead_zone_alert(pygame: object, screen: object, width: int, height: int) -> None:
+    """Flash a full-screen warning when the player is too close to the screen."""
+
+    cycle_ms = 700
+    phase = (pygame.time.get_ticks() % cycle_ms) / cycle_ms
+    pulse = 1.0 - abs(phase - 0.5) * 2.0  # 0 -> 1 -> 0 triangle wave
+
+    overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+    overlay.fill((*DEAD_ZONE_RED, round(60 + pulse * 60)))
+    screen.blit(overlay, (0, 0))
+
+    border_width = max(10, round(min(width, height) * 0.025))
+    pygame.draw.rect(screen, DEAD_ZONE_RED, (0, 0, width, height), width=border_width)
+
+    banner = pygame.Rect(round(width * 0.16), round(height * 0.05), round(width * 0.68), round(height * 0.11))
+    pygame.draw.rect(screen, DEAD_ZONE_RED_DARK, banner.move(0, max(4, height // 130)), border_radius=16)
+    pygame.draw.rect(screen, DEAD_ZONE_RED, banner, border_radius=16)
+    pygame.draw.rect(screen, WHITE, banner, width=max(3, width // 220), border_radius=16)
+    font = _font(pygame, width, 0.042, bold=True)
+    _center_text(screen, font, "STEP BACK - TOO CLOSE TO SCREEN", WHITE, banner.center)
 
 
 def _draw_holes(
