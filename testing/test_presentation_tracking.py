@@ -7,7 +7,7 @@ from software.game.presentation_tracking import (
     interpolate_position,
 )
 from software.game.sensor_scan import SensorId
-from software.game.udp_position import TrackingStatus
+from software.game.tracking_state import TrackingStatus
 from software.transport.mock_sensor_scan_sender import (
     build_sensor_scan_payload,
     encode_payload,

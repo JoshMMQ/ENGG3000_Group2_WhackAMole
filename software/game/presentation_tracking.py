@@ -12,11 +12,11 @@ import time
 from typing import Callable, Optional, Protocol
 
 from software.transport.sensor_scan_packet import parse_sensor_scan_packet
-from software.transport.udp_receiver import DEFAULT_PORT
+from software.transport.network_config import SENSOR_SCAN_PORT
 
 from .sensor_scan import SensorId, SensorScan
 from .simulated_position import PhysicalPosition
-from .udp_position import TrackingStatus
+from .tracking_state import TrackingStatus
 
 
 PRESENTATION_COLUMN_X_M = {
@@ -103,7 +103,7 @@ class PresentationTrackingSource:
     def __init__(
         self,
         host: str = "0.0.0.0",
-        port: int = DEFAULT_PORT,
+        port: int = SENSOR_SCAN_PORT,
         *,
         confirmation_scans: int = DEFAULT_CONFIRMATION_SCANS,
         tracked_depth_m: float = DEFAULT_TRACKED_DEPTH_M,

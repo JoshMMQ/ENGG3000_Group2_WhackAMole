@@ -8,8 +8,6 @@ from math import isfinite
 import sys
 from typing import Optional
 
-from software.transport.serial_sensor import DEFAULT_BAUD_RATE
-
 try:
     import pygame
 except ImportError:
@@ -29,14 +27,13 @@ try:
         pause_button_rect,
         start_button_rect,
     )
-    from .sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
     from .presentation_tracking import (
         PresentationTrackingSnapshot,
         PresentationTrackingSource,
         interpolate_position,
     )
     from .simulated_position import PhysicalPosition, SimulatedPositionSource
-    from .udp_position import TrackingSnapshot, TrackingStatus, UdpPositionSource
+    from .tracking_state import TrackingSnapshot, TrackingStatus
 except ImportError:
     from coordinates import CoordinateMapper, ScreenPosition
     from logging_config import DEFAULT_LOG_PATH, configure_logging
@@ -51,14 +48,13 @@ except ImportError:
         pause_button_rect,
         start_button_rect,
     )
-    from sensor_overlay import DEFAULT_STALE_AFTER_S, SerialSensorOverlay
     from presentation_tracking import (
         PresentationTrackingSnapshot,
         PresentationTrackingSource,
         interpolate_position,
     )
     from simulated_position import PhysicalPosition, SimulatedPositionSource
-    from udp_position import TrackingSnapshot, TrackingStatus, UdpPositionSource
+    from tracking_state import TrackingSnapshot, TrackingStatus
 
 
 WINDOW_WIDTH_PX = 900
@@ -280,26 +276,15 @@ def draw_frame(
     )
 
 
-def _close_sensor_overlay(sensor_overlay: Optional[SerialSensorOverlay]) -> None:
-    if sensor_overlay is None:
-        return
-    try:
-        sensor_overlay.close()
-    except Exception as exc:
-        logger.exception("Unable to close serial overlay cleanly")
-        print(f"Unable to close serial overlay cleanly: {exc}", file=sys.stderr)
-
-
 def run(
     smoke_test: bool = False,
     input_source: str = "simulated",
-    sensor_overlay: Optional[SerialSensorOverlay] = None,
     safety_enabled: bool = False,
 ) -> int:
     """Open the game; safety gates are opt-in during tracking development."""
 
-    if input_source not in {"simulated", "udp", "sensor-scan"}:
-        raise ValueError("input_source must be simulated, udp, or sensor-scan")
+    if input_source not in {"simulated", "sensor-scan"}:
+        raise ValueError("input_source must be simulated or sensor-scan")
     if input_source == "sensor-scan" and safety_enabled:
         raise ValueError("the presentation sensor-scan input is not a safety input")
 
@@ -316,7 +301,6 @@ def run(
         )
 
     if pygame is None:
-        _close_sensor_overlay(sensor_overlay)
         print(
             "pygame is required to render the game window. "
             "Install dependencies with: python3 -m pip install -r requirements.txt",
@@ -330,11 +314,10 @@ def run(
     clock = pygame.time.Clock()
     mapper = create_mapper(screen.get_size(), tracking_only=not safety_enabled)
     simulated_source = SimulatedPositionSource()
-    udp_source = UdpPositionSource() if input_source == "udp" else None
     presentation_source = (
         PresentationTrackingSource() if input_source == "sensor-scan" else None
     )
-    position_source = udp_source or presentation_source
+    position_source = presentation_source
     start_ticks = pygame.time.get_ticks()
     last_frame_ticks = start_ticks
     game_start_ticks = start_ticks
@@ -348,7 +331,6 @@ def run(
     score = 0
     lives = STARTING_LIVES
     audible_warning_active = False
-    sensor_snapshot = sensor_overlay.poll() if sensor_overlay is not None else None
     presentation_snapshot: Optional[PresentationTrackingSnapshot] = (
         presentation_source.tracking_snapshot
         if presentation_source is not None
@@ -373,7 +355,6 @@ def run(
             score=score,
             lives=lives if displayed_lives is None else displayed_lives,
             remaining_seconds=remaining_seconds,
-            sensor_overlay=sensor_snapshot,
             tracking_debug_lines=(
                 presentation_snapshot.diagnostic_lines
                 if presentation_snapshot is not None
@@ -383,8 +364,8 @@ def run(
 
     if smoke_test:
         cursor_position = mapped_cursor_position(simulated_source.position_at(0.0), mapper)
-        draw_loading_screen(screen, 1.0, sensor_snapshot)
-        draw_title_screen(screen, sensor_snapshot)
+        draw_loading_screen(screen, 1.0)
+        draw_title_screen(screen)
         draw_frame(
             screen,
             cursor_position,
@@ -418,10 +399,9 @@ def run(
             paused=True,
             screen_warning=True,
         )
-        draw_game_over_screen(screen, score, sensor_snapshot)
+        draw_game_over_screen(screen, score)
         if position_source is not None:
             position_source.close()
-        _close_sensor_overlay(sensor_overlay)
         pygame.quit()
         return 0
 
@@ -431,8 +411,6 @@ def run(
             now_ticks = pygame.time.get_ticks()
             frame_delta_s = max(0.0, now_ticks - last_frame_ticks) / 1000.0
             last_frame_ticks = now_ticks
-            if sensor_overlay is not None:
-                sensor_snapshot = sensor_overlay.poll()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -493,13 +471,13 @@ def run(
 
             if game_state == "loading":
                 progress = (now_ticks - start_ticks) / 1000.0 / LOADING_SECONDS
-                draw_loading_screen(screen, progress, sensor_snapshot)
+                draw_loading_screen(screen, progress)
                 if progress >= 1.0:
                     game_state = "title"
             elif game_state == "title":
-                draw_title_screen(screen, sensor_snapshot)
+                draw_title_screen(screen)
             elif game_state == "game_over":
-                draw_game_over_screen(screen, score, sensor_snapshot)
+                draw_game_over_screen(screen, score)
             elif game_state == "screen_warning":
                 if not audible_warning_active:
                     set_audible_warning_active(True)
@@ -606,7 +584,7 @@ def run(
                 remaining_seconds = max(0, GAME_SECONDS - int(game_elapsed_s))
                 if remaining_seconds <= 0:
                     game_state = "game_over"
-                    draw_game_over_screen(screen, score, sensor_snapshot)
+                    draw_game_over_screen(screen, score)
                 else:
                     if position_source is None:
                         physical_position = simulated_source.position_at(game_elapsed_s)
@@ -731,7 +709,6 @@ def run(
             set_audible_warning_active(False)
         if position_source is not None:
             position_source.close()
-        _close_sensor_overlay(sensor_overlay)
         pygame.quit()
         logger.info("Game run stopped")
     return 0
@@ -741,22 +718,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Run the Whack-a-Mole game.")
     parser.add_argument(
         "--input",
-        choices=("simulated", "udp", "sensor-scan"),
+        choices=("simulated", "sensor-scan"),
         default="simulated",
         help=(
-            "Use built-in movement, V2 paired-range UDP, or the temporary "
-            "Version 3 presentation cursor input."
+            "Use built-in movement or the Version 3 S1-host sensor-scan input."
         ),
     )
-    parser.add_argument(
-        "--serial-overlay",
-        action="store_true",
-        help="Show two independent USB ranges as diagnostics only.",
-    )
-    parser.add_argument("--left-port", help="Left ESP32 serial device, for example /dev/ttyUSB0.")
-    parser.add_argument("--right-port", help="Right ESP32 serial device, for example /dev/ttyUSB1.")
-    parser.add_argument("--baud", type=int, default=DEFAULT_BAUD_RATE)
-    parser.add_argument("--stale-after", type=float, default=DEFAULT_STALE_AFTER_S)
     parser.add_argument(
         "--enable-safety",
         action="store_true",
@@ -776,35 +743,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     log_path = configure_logging(args.log_file)
     logger.info("Parsed command line args=%s", vars(args))
 
-    overlay = None
-    if args.serial_overlay:
-        if not args.left_port or not args.right_port:
-            parser.error("--left-port and --right-port are required with --serial-overlay")
-        if args.left_port == args.right_port:
-            parser.error("--left-port and --right-port must be different devices")
-        if args.baud <= 0:
-            parser.error("--baud must be positive")
-        if not isfinite(args.stale_after) or args.stale_after <= 0:
-            parser.error("--stale-after must be positive")
-        try:
-            overlay = SerialSensorOverlay(
-                args.left_port,
-                args.right_port,
-                baud_rate=args.baud,
-                stale_after_s=args.stale_after,
-            )
-        except Exception as exc:
-            logger.exception("Unable to open serial overlay")
-            print(f"Unable to open serial overlay: {exc}", file=sys.stderr)
-            return 2
-    elif args.left_port or args.right_port:
-        parser.error("--left-port/--right-port require --serial-overlay")
-
     try:
         return run(
             smoke_test=args.smoke_test,
             input_source=args.input,
-            sensor_overlay=overlay,
             safety_enabled=args.enable_safety,
         )
     except Exception:

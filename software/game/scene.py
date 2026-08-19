@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Sequence
+from typing import Sequence
 
 try:
     from .coordinates import ScreenPosition
 except ImportError:
     from coordinates import ScreenPosition
-
-if TYPE_CHECKING:
-    try:
-        from .sensor_overlay import SensorOverlaySnapshot, SensorOverlayValue
-    except ImportError:
-        from sensor_overlay import SensorOverlaySnapshot, SensorOverlayValue
-
 
 DESERT_COLOR = (238, 149, 70)
 SAND_LINE_COLOR = (209, 119, 54)
@@ -54,25 +47,7 @@ CURSOR_OUTLINE_COLOR = (248, 253, 255)
 HAMMER_WOOD = (194, 119, 31)
 HAMMER_WOOD_LIGHT = (231, 160, 55)
 HAMMER_WOOD_DARK = (121, 72, 24)
-SENSOR_OVERLAY_BACKGROUND = (28, 43, 53)
-SENSOR_OVERLAY_PANEL = (42, 61, 72)
-SENSOR_OVERLAY_LIVE = (42, 177, 105)
-SENSOR_OVERLAY_WAITING = (224, 159, 42)
-SENSOR_OVERLAY_ERROR = (211, 68, 60)
-SENSOR_OVERLAY_UNKNOWN = (112, 126, 135)
-
-
 RectTuple = tuple[int, int, int, int]
-
-
-@dataclass(frozen=True)
-class SensorOverlayLayout:
-    """Pure rectangle layout for the optional two-reading USB strip."""
-
-    container: RectTuple
-    banner: RectTuple
-    left_panel: RectTuple
-    right_panel: RectTuple
 
 
 @dataclass(frozen=True)
@@ -82,7 +57,6 @@ class GameplayUi:
     score: int = 0
     lives: int = 3
     remaining_seconds: int = 60
-    sensor_overlay: SensorOverlaySnapshot | None = None
     tracking_debug_lines: tuple[str, ...] = ()
 
 
@@ -139,62 +113,9 @@ def pause_button_rect(width: int, height: int) -> tuple[int, int, int, int]:
     )
 
 
-def sensor_overlay_layout(width: int, height: int) -> SensorOverlayLayout:
-    """Return a responsive, non-overlapping layout for two USB readings."""
-
-    if width <= 0 or height <= 0:
-        raise ValueError("window dimensions must be positive")
-
-    edge_margin = max(4, round(min(width, height) * 0.012))
-    available_width = max(1, width - edge_margin * 2)
-    container_width = min(
-        available_width,
-        max(min(280, available_width), min(720, round(width * 0.62))),
-    )
-
-    hud_top = round(height * 0.025)
-    hud_height = max(54, round(height * 0.075))
-    container_top = min(height - edge_margin, hud_top + hud_height + edge_margin)
-    available_height = max(1, height - container_top - edge_margin)
-    container_height = min(available_height, max(84, min(108, round(height * 0.12))))
-    container_left = (width - container_width) // 2
-
-    padding = min(
-        max(2, round(min(container_width, container_height) * 0.055)),
-        max(0, (container_width - 2) // 4),
-    )
-    inner_width = max(1, container_width - padding * 2)
-    banner_height = min(
-        max(14, round(container_height * 0.25)),
-        max(1, container_height - padding * 3 - 1),
-    )
-    banner = (
-        container_left + padding,
-        container_top + padding,
-        inner_width,
-        banner_height,
-    )
-
-    panel_gap = min(max(2, round(container_width * 0.012)), max(0, inner_width - 2))
-    left_width = max(1, (inner_width - panel_gap) // 2)
-    right_width = max(1, inner_width - panel_gap - left_width)
-    panel_top = banner[1] + banner[3] + padding
-    panel_height = max(1, container_top + container_height - padding - panel_top)
-    left_panel = (container_left + padding, panel_top, left_width, panel_height)
-    right_panel = (left_panel[0] + left_width + panel_gap, panel_top, right_width, panel_height)
-
-    return SensorOverlayLayout(
-        container=(container_left, container_top, container_width, container_height),
-        banner=banner,
-        left_panel=left_panel,
-        right_panel=right_panel,
-    )
-
-
 def draw_loading_screen(
     screen: object,
     progress: float,
-    sensor_overlay: SensorOverlaySnapshot | None = None,
 ) -> None:
     """Draw the loading screen."""
 
@@ -208,15 +129,10 @@ def draw_loading_screen(
     font = _font(pygame, width, 0.06, bold=True)
     text = font.render(f"{percent}%", True, WHITE)
     screen.blit(text, text.get_rect(center=(width // 2, round(height * 0.66))))
-    if sensor_overlay is not None:
-        _draw_sensor_overlay(pygame, screen, width, height, sensor_overlay)
     pygame.display.flip()
 
 
-def draw_title_screen(
-    screen: object,
-    sensor_overlay: SensorOverlaySnapshot | None = None,
-) -> None:
+def draw_title_screen(screen: object) -> None:
     """Draw the title/start screen."""
 
     import pygame
@@ -226,8 +142,6 @@ def draw_title_screen(
     _draw_title_logo(pygame, screen, width, height, scale=1.0, y_ratio=0.28)
     _draw_intro_characters(pygame, screen, width, height, scale=1.0, y_ratio=0.50)
     _draw_start_button(pygame, screen, width, height)
-    if sensor_overlay is not None:
-        _draw_sensor_overlay(pygame, screen, width, height, sensor_overlay)
     pygame.display.flip()
 
 
@@ -249,14 +163,6 @@ def draw_scene(
     active_ui = ui or GameplayUi()
     _draw_green_field_background(pygame, screen, width, height)
     _draw_gameplay_hud(pygame, screen, width, height, active_ui)
-    if active_ui.sensor_overlay is not None:
-        _draw_sensor_overlay(
-            pygame,
-            screen,
-            width,
-            height,
-            active_ui.sensor_overlay,
-        )
     _draw_holes(
         pygame,
         screen,
@@ -287,7 +193,6 @@ def draw_scene(
 def draw_game_over_screen(
     screen: object,
     score: int,
-    sensor_overlay: SensorOverlaySnapshot | None = None,
 ) -> None:
     """Draw the game-over overlay."""
 
@@ -318,8 +223,6 @@ def draw_game_over_screen(
     _center_text(screen, score_font, f"{score} PTS", (151, 92, 42), (width // 2, round(height * 0.43)))
     _center_text(screen, label_font, "Final score", (92, 54, 32), (width // 2, round(height * 0.53)))
     _draw_continue_button(pygame, screen, width, height)
-    if sensor_overlay is not None:
-        _draw_sensor_overlay(pygame, screen, width, height, sensor_overlay)
     pygame.display.flip()
 
 
@@ -563,147 +466,6 @@ def _draw_tracking_debug(
         )
         surface = font.render(line, True, WHITE)
         screen.blit(surface, (panel.left + padding, y))
-
-
-def _draw_sensor_overlay(
-    pygame: object,
-    screen: object,
-    width: int,
-    height: int,
-    snapshot: SensorOverlaySnapshot,
-) -> None:
-    layout = sensor_overlay_layout(width, height)
-    container = pygame.Rect(layout.container)
-    banner = pygame.Rect(layout.banner)
-    shadow_offset = max(2, round(container.height * 0.05))
-    pygame.draw.rect(
-        screen,
-        (18, 29, 36),
-        container.move(0, shadow_offset),
-        border_radius=max(6, round(container.height * 0.10)),
-    )
-    pygame.draw.rect(
-        screen,
-        SENSOR_OVERLAY_BACKGROUND,
-        container,
-        border_radius=max(6, round(container.height * 0.10)),
-    )
-    pygame.draw.rect(
-        screen,
-        (222, 234, 238),
-        container,
-        width=max(1, round(container.height * 0.025)),
-        border_radius=max(6, round(container.height * 0.10)),
-    )
-
-    pygame.draw.rect(
-        screen,
-        (72, 86, 93),
-        banner,
-        border_radius=max(3, banner.height // 4),
-    )
-    banner_font = _fitted_font(
-        pygame,
-        "USB DIAGNOSTIC — NOT GAMEPLAY INPUT",
-        banner.width - max(6, banner.width // 30),
-        max(9, round(banner.height * 0.56)),
-        bold=True,
-    )
-    _center_text(
-        screen,
-        banner_font,
-        "USB DIAGNOSTIC — NOT GAMEPLAY INPUT",
-        WHITE,
-        banner.center,
-    )
-
-    _draw_sensor_overlay_value(pygame, screen, pygame.Rect(layout.left_panel), snapshot.left, "LEFT")
-    _draw_sensor_overlay_value(pygame, screen, pygame.Rect(layout.right_panel), snapshot.right, "RIGHT")
-
-
-def _draw_sensor_overlay_value(
-    pygame: object,
-    screen: object,
-    panel: object,
-    value: SensorOverlayValue,
-    fallback_label: str,
-) -> None:
-    status = str(value.status).strip().upper()
-    status_color = _sensor_status_color(status)
-    radius = max(3, round(panel.height * 0.10))
-    pygame.draw.rect(screen, SENSOR_OVERLAY_PANEL, panel, border_radius=radius)
-    pygame.draw.rect(screen, status_color, panel, width=max(2, round(panel.height * 0.055)), border_radius=radius)
-
-    label = str(value.label).strip().upper() or fallback_label
-    label_font = _fitted_font(
-        pygame,
-        label,
-        max(1, round(panel.width * 0.38)),
-        max(9, round(panel.height * 0.20)),
-        bold=True,
-    )
-    label_surface = label_font.render(label, True, WHITE)
-    label_rect = label_surface.get_rect(
-        midleft=(panel.left + max(5, round(panel.width * 0.045)), panel.top + round(panel.height * 0.22))
-    )
-    screen.blit(label_surface, label_rect)
-
-    status_font = _fitted_font(
-        pygame,
-        status,
-        max(1, round(panel.width * 0.50)),
-        max(8, round(panel.height * 0.18)),
-        bold=True,
-    )
-    status_surface = status_font.render(status, True, WHITE)
-    status_padding_x = max(4, round(panel.width * 0.025))
-    status_padding_y = max(2, round(panel.height * 0.035))
-    status_badge = status_surface.get_rect(
-        midright=(panel.right - max(5, round(panel.width * 0.045)), panel.top + round(panel.height * 0.22))
-    ).inflate(status_padding_x * 2, status_padding_y * 2)
-    pygame.draw.rect(screen, status_color, status_badge, border_radius=status_badge.height // 2)
-    screen.blit(status_surface, status_surface.get_rect(center=status_badge.center))
-
-    distance_text = "--- mm" if value.distance_mm is None else f"{value.distance_mm:.1f} mm"
-    distance_font = _fitted_font(
-        pygame,
-        distance_text,
-        max(1, panel.width - max(10, round(panel.width * 0.10))),
-        max(12, round(panel.height * 0.34)),
-        bold=True,
-    )
-    _center_text(
-        screen,
-        distance_font,
-        distance_text,
-        WHITE,
-        (panel.centerx, panel.top + round(panel.height * 0.57)),
-    )
-
-    port_text = str(value.port).strip()
-    port_font = _fitted_font(
-        pygame,
-        port_text,
-        max(1, panel.width - max(10, round(panel.width * 0.10))),
-        max(8, round(panel.height * 0.16)),
-    )
-    _center_text(
-        screen,
-        port_font,
-        port_text,
-        (196, 211, 217),
-        (panel.centerx, panel.top + round(panel.height * 0.84)),
-    )
-
-
-def _sensor_status_color(status: str) -> tuple[int, int, int]:
-    if status == "LIVE":
-        return SENSOR_OVERLAY_LIVE
-    if status in {"WAITING", "STALE"}:
-        return SENSOR_OVERLAY_WAITING
-    if status in {"NO ECHO", "ID MISMATCH", "PORT ERROR"}:
-        return SENSOR_OVERLAY_ERROR
-    return SENSOR_OVERLAY_UNKNOWN
 
 
 def _draw_pause_button(pygame: object, screen: object, rect: object, active: bool) -> None:

@@ -10,7 +10,7 @@ from typing import Optional
 
 from software.game.sensor_scan import SensorId
 from .sensor_scan_packet import SENSOR_SCAN_TYPE, SENSOR_SCAN_VERSION
-from .udp_receiver import DEFAULT_PORT
+from .network_config import SENSOR_SCAN_PORT
 
 
 DEFAULT_TARGET_HOST = "127.0.0.1"
@@ -62,7 +62,7 @@ def encode_payload(payload: dict) -> bytes:
 
 def send_mock_scans(
     target_host: str = DEFAULT_TARGET_HOST,
-    target_port: int = DEFAULT_PORT,
+    target_port: int = SENSOR_SCAN_PORT,
     count: int = DEFAULT_COUNT,
     interval_s: float = DEFAULT_INTERVAL_S,
     *,
@@ -94,7 +94,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         description="Send complete Version 3 S1/S2/S3 scans for diagnostics."
     )
     parser.add_argument("--host", default=DEFAULT_TARGET_HOST)
-    parser.add_argument("--port", default=DEFAULT_PORT, type=int)
+    parser.add_argument("--port", default=SENSOR_SCAN_PORT, type=int)
     parser.add_argument("--count", default=DEFAULT_COUNT, type=int)
     parser.add_argument("--interval", default=DEFAULT_INTERVAL_S, type=float)
     parser.add_argument(

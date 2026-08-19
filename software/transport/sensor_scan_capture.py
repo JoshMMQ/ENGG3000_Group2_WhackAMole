@@ -15,7 +15,7 @@ from typing import Optional, Protocol, Sequence
 
 from software.game.sensor_scan import SensorId, SensorScan
 from .sensor_scan_packet import parse_sensor_scan_packet
-from .udp_receiver import DEFAULT_PORT
+from .network_config import SENSOR_SCAN_BIND_HOST, SENSOR_SCAN_PORT
 
 
 DEFAULT_CAPTURE_COUNT = 100
@@ -227,8 +227,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Capture raw Version 3 scans for known-distance calibration."
     )
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", default=DEFAULT_PORT, type=int)
+    parser.add_argument("--host", default=SENSOR_SCAN_BIND_HOST)
+    parser.add_argument("--port", default=SENSOR_SCAN_PORT, type=int)
     parser.add_argument("--count", default=DEFAULT_CAPTURE_COUNT, type=int)
     parser.add_argument("--timeout", default=DEFAULT_TIMEOUT_S, type=float)
     parser.add_argument(

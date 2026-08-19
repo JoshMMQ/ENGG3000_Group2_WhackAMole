@@ -1,340 +1,133 @@
-# Whack-a-Mole Full-Body Game
+# ENGG3000 Whack-a-Mole
 
-This ENGG3000 project turns Whack-a-Mole into a full-body game. Ultrasound
-tracks a player over a 1.50 m wide x 1.40 m deep playable area behind a 0.60 m
-screen dead zone, and a Python/Pygame application maps the estimated position to
-an on-screen hammer cursor.
-
-The repository contains a working game, simulated input, a paired Version 2 UDP
-tracking path, a software-only paired-range sender, a two-board ESP32 tracker,
-and legacy bench diagnostics. That two-sensor path has demonstrated end-to-end
-physical cursor movement and is now the migration baseline for an approved
-three-sensor 3 x 3 cell tracker. Tracking quality, safety, power, enclosure,
-coverage, and Windows release compliance are not yet accepted.
-
-## Source of truth
-
-The formal source is the 5 August 2026 Version 2.0 project brief. The later
-Codex clarification approves the tracking architecture: use S1 left, S2 centre,
-and S3 right to confirm one of nine logical cells; keep S4 spare and unused.
-The clarification changes the implementation architecture but does not replace
-the brief's product constraints. Their authority and facts are reconciled in
-[docs/SOURCE_FACTS.md](docs/SOURCE_FACTS.md).
-
-The physical 3 x 3 grid mentioned in the guide must not be confused with the
-game's 3 x 3 arrangement of nine mole holes. The approved physical playable area
-is 1.50 m x 1.40 m.
-
-## Current tracker — migration baseline
+This repository contains the three-sensor Whack-a-Mole prototype. The retained
+hardware architecture is:
 
 ```text
-left HC-SR04 -> left ESP32 host ---- V2 UDP ----> Windows laptop
-                         |                         validate + triangulate
-                         |                         reject + filter + map
-                         +---- ESP-NOW cycle ----> Pygame at 60 FPS
-                                   |
-                         right ESP32 -> right HC-SR04
+S1 left sensor + host ESP32
+  ├─ measures S1 locally
+  ├─ commands S2, then S3 over ESP-NOW
+  ├─ assembles one Version 3 S1/S2/S3 scan
+  └─ hosts the WhackAMole Wi-Fi network and broadcasts UDP to the laptop
+
+S2 centre sensor + station ESP32 ── ESP-NOW response ──┐
+S3 right sensor + station ESP32  ── ESP-NOW response ──┤
+                                                       ▼
+Laptop connected directly to S1 Wi-Fi ── UDP 5005 ── Pygame
 ```
 
-The left ESP32 combines the wireless-host and left-sensor roles. It creates the
-`WhackAMole` Wi-Fi network, owns `cycle_id`, measures the left range, commands
-the right station 35 ms later, pairs the response, and sends one Version 2 UDP
-datagram. The right station never free-runs in this mode.
+There is no phone hotspot and no laptop sensor coordinator. S4 is unused.
 
-The laptop owns packet validation, triangulation, impossible-geometry rejection,
-post-triangulation position filtering, safety state, coordinate mapping, and
-rendering. Sensor-model-specific HC-SR04 or RCWL-1601 behavior must remain in
-firmware.
+## Current status
 
-This path still uses exactly two active HC-SR04 sensors and two ESP32 boards. It
-is kept working for regression and migration; it is not the approved target.
+The software can:
 
-## Approved target tracker
+- run the game with simulated movement;
+- receive strict Version 3 scans containing exactly S1, S2, and S3;
+- drive a demonstration cursor from those scans without blocking Pygame;
+- inspect, mock, and capture scan packets; and
+- enforce the three-firmware source contract with automated tests.
 
-The target uses three of the four available RCWL-1601 modules:
+The live cursor uses a deliberately simple algorithm: a rolling median per
+sensor, minimum-range sensor selection, two-scan switch confirmation, fixed
+left/centre/right X targets, range-derived Y, and render-only interpolation.
+This implementation is retained, but it is not yet physical proof of accuracy,
+dead-zone safety, or nine-cell scoring.
 
-- S1 at the left, primarily associated with column 1;
-- S2 at the centre, primarily associated with column 2;
-- S3 at the right, primarily associated with column 3; and
-- S4 as an unused spare, excluded from telemetry, classification, safety, and
-  gameplay.
+## Setup
 
-One complete scan contains valid, fresh S1/S2/S3 measurements from the same
-cycle. The laptop calibrates and filters the readings, requires confidence and
-hysteresis before confirming a column, classifies the selected depth into a row
-with hysteresis, and exposes a row-major `PlayerCell` from 1 to 9. Raw `argmin`
-and uncertain candidates must never reach gameplay. No servo is part of this
-approved architecture.
-
-For the target, an iPhone 13 Personal Hotspot provides the shared Wi-Fi network
-and the Windows laptop is the only scan coordinator. Three independent ESP32
-stations obtain addresses through DHCP, send unicast registration heartbeats
-to the configured laptop IPv4 address, and measure only after their matching
-S1/S2/S3 UDP command. The former S1-host/ESP-NOW source remains separately as a
-regression baseline. The third board is additional to the two listed as
-supplied and must be included in the BOM/budget; final standalone-box and
-wireless compliance still require evidence. See
-[docs/LAPTOP_SENSOR_COORDINATOR.md](docs/LAPTOP_SENSOR_COORDINATOR.md).
-
-## Quick start
-
-Python 3.10 or later is recommended.
+Python 3.12 is recommended.
 
 ```bash
 python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-On Windows PowerShell:
+On Windows, use `.venv\Scripts\python.exe` instead of
+`.venv/bin/python`.
 
-```powershell
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m software.game.main
-```
+## Run
 
-On Linux/macOS:
+Simulation:
 
 ```bash
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m software.game.main
+.venv/bin/python -m software.game.main --input simulated
 ```
 
-Simulated input is the default. Run the paired physical/software UDP path with:
+Physical S1-host scan input:
 
-```bash
-.venv/bin/python -m software.game.main --input udp
-```
-
-The temporary tracking-debug runtime defaults to safety gates disabled. It maps
-the complete tracked depth `y = 0.00..2.00 m`, retains the previous cursor for
-invalid/stale data, and does not pause or remove lives for tracking safety input.
-Restore the approved V2 safety behavior for regression testing with:
-
-```bash
-.venv/bin/python -m software.game.main --input udp --enable-safety
-```
-
-This temporary default is not suitable for final safety acceptance.
-
-Controls:
-
-- `Enter`, `Space`, or the on-screen button starts/restarts a game.
-- `P` or the on-screen pause button pauses and resumes.
-- `Esc` exits.
-- `G` ends the active game early for development testing.
-
-## V2 geometry and safety
-
-- Screen wall: `y = 0`.
-- Complete tracked footprint: `0.00 <= x <= 1.50 m` and
-  `0.00 <= y <= 2.00 m`.
-- Dead zone: `0.00 <= y < 0.60 m`.
-- Playable area: `0.00 <= x <= 1.50 m` and
-  `0.60 <= y <= 2.00 m`.
-- Initial acoustic centres: `(0.00, 0.10)` m and `(1.50, 0.10)` m until measured
-  calibration replaces them.
-- Software safety entry threshold: `y < 0.60 m`; clear threshold:
-  `y >= 0.70 m` for hysteresis.
-
-With `--enable-safety`, dead-zone and tracking-loss states retain the last
-playable cursor and suppress active play. The visual warning path exists; the
-audible warning function remains a stub and physical safety validation remains
-outstanding.
-
-## Current Version 2 packet
-
-The current migration-baseline packet represents one time-matched left/right
-cycle:
-
-```json
-{
-  "version": 2,
-  "type": "range_pair",
-  "cycle_id": 42,
-  "left_mm": 1318.4,
-  "right_mm": 1281.7,
-  "left_valid": true,
-  "right_valid": true,
-  "pair_skew_ms": 35.0
-}
-```
-
-Distances are millimetres. The parser rejects malformed, invalid, excessive-skew,
-duplicate/older, stale, impossible, and out-of-footprint input as appropriate.
-The game never maps a single range directly to a screen axis.
-
-Run a hardware-free live integration in two terminals:
-
-```bash
-.venv/bin/python -m software.game.main --input udp
-```
-
-```bash
-.venv/bin/python -m software.transport.mock_range_pair_sender
-```
-
-The Version 1 `software.transport.mock_udp_sender`, `udp_receiver`,
-`firmware/gateway_ap`, and `firmware/sensor_node` paths remain legacy regression
-tools. They are not the active V2 gameplay path.
-
-## Target Version 3 scan packet
-
-The separate three-ESP32 MVP emits one strict packet containing exactly S1,
-S2, and S3:
-
-```json
-{
-  "version": 3,
-  "type": "sensor_scan",
-  "cycle_id": 42,
-  "readings": [
-    {"sensor_id": "s1", "distance_mm": 900.0, "valid": true, "sample_time_ms": 1000},
-    {"sensor_id": "s2", "distance_mm": 1100.0, "valid": true, "sample_time_ms": 1035},
-    {"sensor_id": "s3", "distance_mm": 1300.0, "valid": true, "sample_time_ms": 1070}
-  ]
-}
-```
-
-The parser, laptop coordinator, diagnostic tools, and three Phase 2 Wi-Fi/UDP
-station sketches now exist. Source tests pass, but Arduino compilation/upload,
-phone-hotspot communication, and physical S1/S2/S3 telemetry remain unverified.
-
-### Configure the Phase 2 stations locally
-
-The active target sketches are:
-
-- `firmware/three_sensor_wifi_station_left` for S1;
-- `firmware/three_sensor_wifi_station_centre` for S2; and
-- `firmware/three_sensor_wifi_station_right` for S3.
-
-Each directory contains exactly one self-contained Arduino sketch. The S1, S2,
-and S3 identities are permanently fixed in their respective files, so no
-sensor-index edit is required before upload. In each `.ino`, enter the hotspot
-SSID/password and laptop IPv4 address at the top, then upload that file only to
-the labelled board. Restore the password placeholder immediately after upload
-and before staging or committing the tracked file. The iPhone gateway address
-is not the laptop address.
-
-On Ubuntu, find the active hotspot address with
-`ip -4 -brief address show wlp0s20f3`; use the four address octets, without the
-CIDR suffix, as `COORDINATOR_IP`. Permit inbound UDP 5006 on the active Wi-Fi
-interface without disabling the firewall.
-
-On the iPhone, enable **Settings > Personal Hotspot > Allow Others to Join** and
-**Maximize Compatibility**. Connect the Windows laptop to that hotspot and run
-`ipconfig`; use the **IPv4 Address** under the active Wi-Fi adapter in all three
-local configuration files. Permit inbound UDP 5006 in Windows Firewall without
-disabling the firewall.
-
-Start a Version 3 consumer, then start the coordinator:
-
-```powershell
-python -m software.transport.sensor_scan_receiver --host 127.0.0.1
-```
-
-```powershell
-python -m software.transport.sensor_coordinator `
-  --bind-host 0.0.0.0 --control-port 5006 `
-  --output-host 127.0.0.1 --output-port 5005
-```
-
-Flash and validate S1 alone before S2 and S3. At 115200 baud, require the
-correct identity, DHCP address, configured coordinator address, immediate and
-one-second HELLO activity, matching command cycle, and plausible result. If the
-iPhone lists both devices but the coordinator never registers S1, suspect
-hotspot client isolation and stop; do not infer success from Serial `hello=sent`.
-
-Terminal 1:
-
-```bash
-.venv/bin/python -m software.transport.sensor_scan_receiver --host 127.0.0.1
-```
-
-Terminal 2:
-
-```bash
-.venv/bin/python -m software.transport.mock_sensor_scan_sender
-```
-
-For controlled physical evidence, close the console receiver and capture a
-stationary flat target with:
-
-```bash
-.venv/bin/python -m software.transport.sensor_scan_capture \
-  --sensor s2 --known-distance-mm 500 --count 100 \
-  --run-label s2-flat-board-500mm \
-  --output evidence/S2-500mm-raw.csv
-```
-
-The tool refuses to overwrite an existing capture and prints validity, median,
-the selected sensor's ground-truth error, range, cycle gaps, and duplicates.
-Repeat at 500 mm and 1000 mm for S1, S2, and S3 before setting calibration
-offsets.
-
-For the temporary presentation-only three-sensor cursor demo, close every
-other program using UDP port 5005 and run:
+1. Power S2 and S3, then S1.
+2. Connect the laptop to the `WhackAMole` Wi-Fi network created by S1.
+3. Allow inbound UDP port 5005 in the laptop firewall.
+4. Run:
 
 ```bash
 .venv/bin/python -m software.game.main --input sensor-scan
 ```
 
-Press `Enter`, `Space`, or Start after the game opens. This isolated input uses
-the smallest valid S1/S2/S3 range, requires two consecutive wins before a
-column switch, clamps depth to 0–2 m, and smoothly interpolates only the
-rendered cursor. It is not calibrated production tracking and cannot be used
-with `--enable-safety`. See `docs/THREE_SENSOR_PRESENTATION_MVP.md`.
+Do not add `--enable-safety` to sensor-scan mode. Its raw winner-based cursor
+has not been validated as safety logic.
 
-## Hardware facts and constraints
+## Hardware roles
 
-The formal brief supplies 2 ESP32 boards, 2 antennas, 4 RCWL-1601 sensors,
-2 battery packs containing 4 AA NiMH cells and a holder, perfboard, and
-connectors. Three RCWL-1601 modules are assigned to the approved target and the
-fourth is spare. The preserved paired baseline uses the two supplied ESP32s;
-the current presentation setup uses a third ESP32 available to the team so S1,
-S2, and S3 each have a dedicated board.
+| Device | Role |
+|---|---|
+| S1 / left ESP32 | Wi-Fi access point, ESP-NOW coordinator, local S1 acquisition, complete-scan assembly, UDP broadcaster |
+| S2 / centre ESP32 | Measures only when an ESP-NOW command targets S2, then replies to S1 |
+| S3 / right ESP32 | Measures only when an ESP-NOW command targets S3, then replies to S1 |
+| Laptop | Joins S1 Wi-Fi, validates Version 3 scans, updates tracking/game state, and renders Pygame |
+| S4 | Spare; absent from firmware, packets, and tracking |
 
-Mandatory constraints include:
+The provisional cycle begins S1 at 0 ms, commands S2 at 35 ms, and commands S3
+at 70 ms. Physical cross-talk and timing still need measurement.
 
-- every physical component remains within 0.50 m of the wall and outside the
-  playable area;
-- each sensor is a standalone box no larger than 100 mm x 100 mm x 50 mm;
-- each box communicates wirelessly with the PC;
-- each box runs for more than one hour with 4 x AA NiMH cells as its only power
-  source;
-- total project cost, including supplied parts, remains within AUD 100;
-- supplied components receive no solder, adhesive, paint, or similar material;
-- the game is downloadable and installable on a Windows laptop.
+## Important files
 
-USB-A recharging is desirable but is explicitly not essential in the brief.
+| Path | Purpose |
+|---|---|
+| `firmware/three_sensor_host_left/three_sensor_host_left.ino` | S1 host/AP/coordinator firmware |
+| `firmware/three_sensor_station_centre/three_sensor_station_centre.ino` | S2 ESP-NOW station |
+| `firmware/three_sensor_station_right/three_sensor_station_right.ino` | S3 ESP-NOW station |
+| `software/game/main.py` | Game loop and input selection |
+| `software/game/presentation_tracking.py` | Current Version 3 cursor tracker |
+| `software/game/tracking_state.py` | Sensor-neutral tracking status/snapshot |
+| `software/game/sensor_scan.py` | Immutable S1/S2/S3 scan domain model |
+| `software/transport/sensor_scan_packet.py` | Strict Version 3 parser/encoder |
+| `software/transport/network_config.py` | Shared UDP bind host and port |
+| `software/transport/mock_sensor_scan_sender.py` | Hardware-free scan generator |
+| `software/transport/sensor_scan_receiver.py` | Console packet diagnostic |
+| `software/transport/sensor_scan_capture.py` | Non-overwriting CSV capture tool |
+| `docs/architecture.md` | Detailed component and data-flow explanation |
+| `docs/runbook.md` | Firmware, network, and verification procedure |
 
-The current ordinary HC-SR04 bench arrangement uses temporary 3.3 V sensor
-power with Echo connected directly to GPIO35. This is outside nominal HC-SR04
-operation. Never move VCC to 5 V while Echo remains directly connected; a
-verified protected Echo interface is required before calibration or final use.
+## Packet diagnostics
 
-See [docs/TWO_BOARD_V2_RANGE_PAIR.md](docs/TWO_BOARD_V2_RANGE_PAIR.md) for the
-current migration-baseline procedure and
-[docs/TWO_SENSOR_USB_BENCH.md](docs/TWO_SENSOR_USB_BENCH.md) for the separate
-dual-USB diagnostic. Neither procedure implements the target centre sensor.
+Receiver:
 
-## Current game behavior
+```bash
+.venv/bin/python -m software.transport.sensor_scan_receiver --count 10
+```
 
-The prototype currently provides:
+Mock sender, in a second terminal:
 
-- a resizable 900 x 900 initial window rendered at 60 FPS;
-- nine mole holes in a 3 x 3 on-screen layout;
-- one timed active mole, hover/hit preview, a 60-second session, pause/resume,
-  lives display, safety/tracking overlays, and game-over flow;
-- simulated and Version 2 UDP position sources;
-- rotating runtime diagnostics in `runtime-logs/game.log`.
+```bash
+.venv/bin/python -m software.transport.mock_sensor_scan_sender --count 10
+```
 
-Score mutation, difficulty selection, calibration UI, complete audible/visual
-feedback, and a packaged Windows release remain incomplete.
+Known-distance capture:
+
+```bash
+.venv/bin/python -m software.transport.sensor_scan_capture \
+  --sensor s2 \
+  --known-distance-mm 500 \
+  --count 100 \
+  --run-label s2-flat-board-500mm \
+  --output evidence/S2-500mm-raw.csv
+```
 
 ## Verification
 
-Run from the repository root:
+From the repository root:
 
 ```bash
 .venv/bin/python -m unittest discover -s testing -v
@@ -342,20 +135,16 @@ Run from the repository root:
 SDL_VIDEODRIVER=dummy .venv/bin/python -m software.game.main --smoke-test
 ```
 
-The automated suite is software evidence only. The 14 August 2026 physical run
-proved the end-to-end paired cursor path but accepted only 316 of 885 cycles
-(35.7%), about five usable positions per second. It did not establish tracking
-accuracy, full coverage, power life, enclosure compliance, or final safety.
-See [docs/V1_1_CURRENT_IMPLEMENTATION_REPORT.md](docs/V1_1_CURRENT_IMPLEMENTATION_REPORT.md).
+Automated tests do not replace Arduino compilation, upload, sensor identity,
+radio timing, calibration, coverage, latency, power, enclosure, or safety
+evidence.
 
-## Next migration gate
+## Product geometry
 
-1. Compile and upload the separate S1-host, S2-centre, and S3-right sketches.
-2. Physically verify three sequential, non-overlapping measurements per cycle;
-   keep S4 absent and record scan timing/miss rate.
-3. Review that evidence before adding calibration or filtering.
-4. Add calibration, median filtering, confidence, and column hysteresis.
-5. Add row thresholds/hysteresis and expose only a confirmed `PlayerCell`.
-6. Integrate cells into gameplay, then restore and physically verify safety.
-7. Validate full-cell coverage, latency, four-AA runtime, enclosures, budget,
-   and Windows installation.
+- Screen wall: `y = 0`
+- Dead zone: `0.00 <= y < 0.60 m`
+- Playable area: `0.00 <= x <= 1.50 m`, `0.60 <= y <= 2.00 m`
+- Safety clear threshold: `y >= 0.70 m`
+- Cells are row-major: 1–3 near the screen, 4–6 middle, 7–9 rear
+
+The formal product requirements remain in `docs/PROJECT_V2.md`.

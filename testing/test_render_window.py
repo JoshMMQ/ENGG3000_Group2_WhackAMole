@@ -1,6 +1,6 @@
 import unittest
 
-from software.game.udp_position import TrackingSnapshot, TrackingStatus
+from software.game.tracking_state import TrackingSnapshot, TrackingStatus
 
 from software.game.main import (
     active_hole_index_at,
