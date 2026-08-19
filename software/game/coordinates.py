@@ -12,8 +12,10 @@ ScreenPosition = Tuple[int, int]
 class CoordinateMapper:
     """Map physical metre coordinates into screen pixel coordinates."""
 
-    play_area_width_m: float = 3.0
-    play_area_height_m: float = 3.0
+    play_area_left_m: float = 0.0
+    play_area_top_m: float = 0.60
+    play_area_width_m: float = 1.50
+    play_area_height_m: float = 1.40
     screen_width_px: int = 900
     screen_height_px: int = 900
 
@@ -30,8 +32,8 @@ class CoordinateMapper:
     def physical_to_screen(self, x_m: object, y_m: object) -> Optional[ScreenPosition]:
         """Convert physical metres to clamped screen pixels.
 
-        The physical and screen coordinate systems both use top-left as the
-        origin. Invalid values return None so callers can ignore bad readings.
+        Only the playable V2 area is mapped: world ``y=0.60`` is the top of
+        the window and ``y=2.00`` is the bottom. Invalid values return None.
         """
 
         x = self._valid_number(x_m)
@@ -39,11 +41,21 @@ class CoordinateMapper:
         if x is None or y is None:
             return None
 
-        clamped_x = self._clamp(x, 0.0, self.play_area_width_m)
-        clamped_y = self._clamp(y, 0.0, self.play_area_height_m)
+        right_m = self.play_area_left_m + self.play_area_width_m
+        bottom_m = self.play_area_top_m + self.play_area_height_m
+        clamped_x = self._clamp(x, self.play_area_left_m, right_m)
+        clamped_y = self._clamp(y, self.play_area_top_m, bottom_m)
 
-        screen_x = round((clamped_x / self.play_area_width_m) * (self.screen_width_px - 1))
-        screen_y = round((clamped_y / self.play_area_height_m) * (self.screen_height_px - 1))
+        screen_x = round(
+            ((clamped_x - self.play_area_left_m) / self.play_area_width_m)
+            * (self.screen_width_px - 1)
+            + 1e-9
+        )
+        screen_y = round(
+            ((clamped_y - self.play_area_top_m) / self.play_area_height_m)
+            * (self.screen_height_px - 1)
+            + 1e-9
+        )
 
         return screen_x, screen_y
 
